@@ -1,0 +1,6 @@
+# Runtime audit log — local only, contains compliance metadata. Never commit.
+logs/*.jsonl
+logs/*.jsonl.*
+
+# Keep the logs/ directory tracked (audit log is written here at runtime).
+!logs/.gitkeep

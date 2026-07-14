@@ -1,0 +1,18 @@
+{
+  "_comment_purpose": "Org-managed settings that FORCE-ENABLE the inverita-guardrail plugin and its hook. Managed settings have the HIGHEST precedence in Claude Code and cannot be overridden by user (~/.claude) or project (.claude) settings. Keys prefixed with _comment_ are documentation only — delete them before deploying (they are ignored, but keep the file tidy).",
+
+  "_comment_enabledPlugins": "Format is \"<marketplace>/<plugin>\". Here the marketplace is the org's plugin marketplace named 'inverita' and the plugin is 'inverita-guardrail'. Because this is set in MANAGED settings, developers cannot disable the plugin in their own settings — the setting is enforced, not merely defaulted.",
+  "enabledPlugins": ["inverita/inverita-guardrail"],
+
+  "_comment_allowManagedHooksOnly": "REQUIRED for real enforcement. When true, Claude Code executes ONLY hooks that originate from managed settings / managed plugins and ignores hooks defined in user or project settings. Without this flag a developer could register a competing hook or otherwise interfere; with it, the guardrail hook is the authoritative UserPromptSubmit hook. This is the difference between 'recommended' and 'enforced'.",
+  "allowManagedHooksOnly": true,
+
+  "_comment_delivery_team_plan": "DELIVERY OPTION A — Team/Enterprise plan admin console: Configure these managed settings in the Claude admin console and assign them to the PixelCare Health workspace/users. Managed settings delivered this way refresh on the client approximately hourly, so a developer who edits local settings has the managed policy re-applied on the next refresh. Good when you manage users through the Anthropic console and do not run device management.",
+
+  "_comment_delivery_mdm": "DELIVERY OPTION B — MDM-pushed file at a SYSTEM-LEVEL path (recommended for hard enforcement): Push THIS file (with _comment_ keys removed) to the OS system path below via your MDM (Jamf, Intune, etc.). System paths are root/administrator-owned and NOT user-writable, so a developer-level session cannot edit or delete them to bypass the guard. Do NOT place managed settings in ~/.claude/ — that path is user-writable and therefore bypassable.",
+  "_comment_path_macos": "macOS: /Library/Application Support/ClaudeCode/managed-settings.json",
+  "_comment_path_linux": "Linux: /etc/claude-code/managed-settings.json",
+  "_comment_path_windows": "Windows: C:\\ProgramData\\ClaudeCode\\managed-settings.json",
+
+  "_comment_scope": "This filters what is typed into Claude Code prompts. It is a client-side control and NOT a substitute for BAA/HIPAA-compliant upstream data handling. Real PHI must never be entered into any prompt regardless of this guard."
+}
