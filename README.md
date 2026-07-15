@@ -195,7 +195,28 @@ To request a change:
 
 ---
 
-## Testing checklist
+## Testing
+
+### Automated test suite
+
+An automated suite lives in `test/` and uses Node's built-in test runner
+(`node:test`) — no third-party dependencies, matching the plugin's zero-dep
+design. It covers every Layer-1 and Layer-2 category, false-positive guards,
+tier precedence, the full stdin→stdout hook contract (block / clean /
+fail-open, always exit 0), and the audit log (metadata-only, no raw text, and
+size-cap rotation).
+
+```bash
+npm test          # runs `node --test` with auto-discovery
+# or a single file:
+node --test test/guardrail.test.mjs
+```
+
+> Use `npm test` (or an explicit file path). `node --test test/` with a
+> trailing-slash directory arg fails on Node 25 — it tries to import the
+> directory as a module; that is an arg-parsing quirk, not a test failure.
+
+### Manual checklist
 
 Run the hook directly by piping a payload to it. The hook reads
 `{ prompt, session_id, cwd }` from stdin.
