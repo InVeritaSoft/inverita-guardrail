@@ -5,6 +5,7 @@ import process from 'node:process';
 import { processHookInput } from '../hooks/pre-prompt-guard.mjs';
 import { runCheck } from '../src/check.mjs';
 import { runDoctor } from '../src/doctor.mjs';
+import { startServer } from '../src/serve.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -88,6 +89,19 @@ if (cmd === undefined) {
     process.stdout.write(`\n${result.ok ? 'OK: guard is healthy' : 'PROBLEM: see FAIL lines above'}\n`);
   }
   process.exit(result.ok ? 0 : 1);
+} else if (cmd === 'serve') {
+  const rest = argv.slice(1);
+  const portIdx = rest.indexOf('--port');
+  const hostIdx = rest.indexOf('--host');
+  const port = portIdx >= 0 ? Number(rest[portIdx + 1]) : 8787;
+  const host = hostIdx >= 0 ? rest[hostIdx + 1] : '127.0.0.1';
+  process.stderr.write(
+    `[inverita-guard] serving on http://${host}:${port}\n` +
+      `WARNING: every prompt (possibly containing PHI) is POSTed here — run this\n` +
+      `endpoint only inside your compliance boundary. Claude Code fails OPEN on\n` +
+      `connection error/timeout.\n`,
+  );
+  startServer({ host, port });
 } else {
   process.stderr.write(`unknown command: ${cmd}\n`);
   printHelp();
