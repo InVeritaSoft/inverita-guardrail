@@ -1,10 +1,23 @@
 # inverita-guardrail
 
-A force-enabled Claude Code plugin that runs a **mandatory PHI-safety check on
-every prompt** for the PixelCare Health project. It blocks prompts that look
-like they contain protected health information (PHI) or unnecessary clinical
-specifics *before they reach Claude*, and it is designed to be deployed
-**org-wide** so individual developers cannot disable or bypass it.
+A Claude Code guard that runs a **mandatory PHI-safety check on every prompt**
+for the PixelCare Health project. It blocks prompts that look like they contain
+protected health information (PHI) or unnecessary clinical specifics *before
+they reach Claude*. It ships two ways:
+
+- as an **opt-in plugin** (via the marketplace) for developers who install it
+  voluntarily, and
+- as an **org-wide managed hook** delivered through managed settings, so
+  individual developers cannot disable or bypass it.
+
+> [!IMPORTANT]
+> **There is no supported way to force-*install* a named plugin onto the Claude
+> Code CLI.** The claude.ai admin console's "Required" / auto-install plugin
+> preferences target Cowork and claude.ai web/mobile — on the CLI an org plugin
+> is only *made available*, and the developer still installs it. Org-wide
+> **enforcement** is therefore done by delivering the guard as a **managed
+> hook** (managed settings register the `UserPromptSubmit` hook directly),
+> **not** by force-enabling a plugin. See [Force-enforcement](#force-enforcement-for-admins).
 
 > [!IMPORTANT]
 > This is a **client-side filter**, not a compliance boundary. It reduces
@@ -55,41 +68,56 @@ Every block appends one JSON line to `logs/audit.jsonl`:
 
 ---
 
-## Force-install (for admins)
+## Force-enforcement (for admins)
 
-Enforcement has two parts: (1) make the plugin available from your org
-marketplace, and (2) force-enable it via **managed settings**.
+Enforcement on the Claude Code CLI is delivered as a **managed hook**, not a
+force-installed plugin (see the note at the top of this README for why). It has
+two parts: (1) deploy the guard code to a fixed root-owned path, and (2)
+register it as a `UserPromptSubmit` hook via **managed settings**.
 
-### 1. Publish the plugin to your org marketplace
+Work from `managed-settings/managed-settings.example.json` — copy it, **remove
+the `_comment_*` documentation keys**, and adjust the deploy path to match your
+fleet.
 
-Host this plugin in your organization's Claude Code plugin marketplace (named
-`inverita` in the examples here) so it resolves as `inverita/inverita-guardrail`.
+### 1. Deploy the guard code
+
+Push the **entire plugin directory** (this repo) to a fixed, root-owned path via
+your MDM (Jamf, Intune, Ansible, …). Keep the internal layout so `hooks/` and a
+**writable** `logs/` subdir both exist.
+
+| OS | Recommended deploy path |
+|----|-------------------------|
+| Linux | `/opt/inverita-guardrail` |
+| macOS | `/Library/Application Support/ClaudeCode/inverita-guardrail` |
+| Windows | `C:\Program Files\ClaudeCode\inverita-guardrail` |
+
+The script should be **read-only** to developers. The `logs/` subdir must be
+**writable** (e.g. mode `1777`) or the metadata-only audit log is silently
+skipped — audit logging fails open by design and never blocks the guard.
 
 ### 2. Deliver managed settings
 
-Copy `managed-settings/managed-settings.example.json`, **remove the
-`_comment_*` documentation keys**, and deliver it as managed settings via
-**one** of:
+Deliver the managed settings (registering the hook, with `allowManagedHooksOnly`)
+via **one** of:
 
-**Option A — Team/Enterprise admin console (refreshes ~hourly).**
-Configure the managed settings in the Claude admin console and assign them to
-the PixelCare Health workspace/users. If a developer edits their local
-settings, the managed policy is re-applied on the next (~hourly) refresh.
-Best when you manage users through the Anthropic console and don't run device
-management.
-
-**Option B — MDM-pushed file at a system-level path (recommended for hard
-enforcement).** Push the file via your MDM (Jamf, Intune, …) to the
-OS system path:
+**Option A — MDM-pushed file at a system-level path (recommended for hard
+enforcement).** Push the file via your MDM to the OS system path:
 
 | OS | Path |
 |----|------|
 | macOS | `/Library/Application Support/ClaudeCode/managed-settings.json` |
-| Linux | `/etc/claude-code/managed-settings.json` |
-| Windows | `C:\ProgramData\ClaudeCode\managed-settings.json` |
+| Linux / WSL | `/etc/claude-code/managed-settings.json` |
+| Windows | `C:\Program Files\ClaudeCode\managed-settings.json` |
 
 These paths are **root/administrator-owned and not user-writable**, so a
 developer-level session cannot edit or delete them to bypass the guard.
+
+**Option B — Team/Enterprise admin console (server-managed, refreshes ~hourly).**
+Configure the managed settings in the claude.ai admin console and assign them to
+the PixelCare Health workspace/users. If a developer edits their local settings,
+the managed policy is re-applied on the next (~hourly) refresh. Requires a Claude
+for Teams or Enterprise plan. The file/MDM path is stronger for hard enforcement
+because it is root-owned and offline.
 
 > [!WARNING]
 > Do **not** place the managed settings in `~/.claude/`. That path is
@@ -99,36 +127,59 @@ developer-level session cannot edit or delete them to bypass the guard.
 
 ### Managed settings contents
 
+The command path must match your step-1 deploy path (Linux shown):
+
 ```json
 {
-  "enabledPlugins": ["inverita/inverita-guardrail"],
-  "allowManagedHooksOnly": true
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /opt/inverita-guardrail/hooks/pre-prompt-guard.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "allowManagedHooksOnly": true,
+  "strictPluginOnlyCustomization": true
 }
 ```
+
+### Verify it's active
+
+Have a developer run `/status` in Claude Code. The **`Setting sources`** line
+should show `Enterprise managed settings` with the source in parentheses —
+`(file)` for the MDM-pushed `managed-settings.json`, or `(remote)` for
+admin-console delivery. That confirms the managed hook is live.
 
 ---
 
 ## Why `allowManagedHooksOnly` is required for real enforcement
 
-`enabledPlugins` in managed settings force-*enables* the plugin. But hooks can
-also be registered from user (`~/.claude/settings.json`) and project
+Registering the guard hook in managed settings makes it run. But hooks can
+**also** be registered from user (`~/.claude/settings.json`) and project
 (`.claude/settings.json`) scopes. Without an additional control, a developer
 could register their own competing `UserPromptSubmit` hook, or otherwise
 interfere with hook execution.
 
 `"allowManagedHooksOnly": true` tells Claude Code to execute **only** hooks that
 originate from **managed settings / managed plugins** and to ignore hooks
-defined in user or project settings. This makes the guardrail hook the single
+defined in user or project settings. This makes the guard the single
 authoritative `UserPromptSubmit` hook.
 
-**This flag is the line between "recommended" and "enforced."** Enabling the
-plugin without it means the guard runs, but the developer's own hooks run too
-and the setup is not tamper-resistant. With both the managed `enabledPlugins`
-entry *and* `allowManagedHooksOnly`, there is no developer-level way to silently
-opt out.
+**This flag is the line between "recommended" and "enforced."** The managed hook
+without it means the guard runs, but the developer's own hooks run too and the
+setup is not tamper-resistant. With both the managed hook *and*
+`allowManagedHooksOnly`, there is no developer-level way to silently opt out.
+Add `strictPluginOnlyCustomization` to also block skills/agents/hooks/MCP from
+user and project sources entirely.
 
 There is deliberately **no bypass flag, no debug env var that disables the
-hook, and no local per-developer override** anywhere in this plugin.
+hook, and no local per-developer override** anywhere in this guard.
 
 ---
 
