@@ -76,3 +76,11 @@ test('doctor --json returns a result object and a nonzero exit when unwired', ()
   assert.ok(Array.isArray(out.checks) && out.checks.length === 4);
   assert.equal(typeof out.ok, 'boolean');
 });
+
+test('install --managed prints valid managed settings JSON', () => {
+  const res = run(['install', '--managed']);
+  assert.equal(res.status, 0);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.allowManagedHooksOnly, true);
+  assert.equal(out.hooks.UserPromptSubmit[0].hooks[0].command, 'inverita-guard');
+});

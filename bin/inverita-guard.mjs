@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import process from 'node:process';
 import { processHookInput } from '../hooks/pre-prompt-guard.mjs';
 import { runCheck } from '../src/check.mjs';
 import { runDoctor } from '../src/doctor.mjs';
 import { startServer } from '../src/serve.mjs';
+import { buildManagedSettings, installToUserSettings, mergeHookIntoSettings } from '../src/install.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -102,6 +104,30 @@ if (cmd === undefined) {
       `connection error/timeout.\n`,
   );
   startServer({ host, port });
+} else if (cmd === 'install') {
+  const rest = argv.slice(1);
+  if (rest.includes('--managed')) {
+    process.stdout.write(`${JSON.stringify(buildManagedSettings(), null, 2)}\n`);
+  } else {
+    const file = path.join(os.homedir(), '.claude', 'settings.json');
+    if (rest.includes('--print')) {
+      let current = {};
+      try {
+        current = JSON.parse(readFileSync(file, 'utf8'));
+      } catch {
+        current = {};
+      }
+      process.stdout.write(`${JSON.stringify(mergeHookIntoSettings(current).settings, null, 2)}\n`);
+    } else {
+      const r = installToUserSettings(file);
+      process.stdout.write(
+        r.already
+          ? `inverita-guard hook already present in ${file}\n`
+          : `wired inverita-guard UserPromptSubmit hook into ${file}\n`,
+      );
+    }
+  }
+  process.exit(0);
 } else {
   process.stderr.write(`unknown command: ${cmd}\n`);
   printHelp();
