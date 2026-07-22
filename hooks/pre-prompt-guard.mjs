@@ -342,7 +342,7 @@ function rotateIfNeeded(logFile) {
  */
 export function appendAudit(entry, isoTimestamp) {
   try {
-    const dir = path.join(pluginRoot(), 'logs');
+    const dir = process.env.INVERITA_GUARD_LOG_DIR || path.join(pluginRoot(), 'logs');
     const logFile = path.join(dir, 'audit.jsonl');
     fs.mkdirSync(dir, { recursive: true });
     rotateIfNeeded(logFile);
@@ -355,6 +355,45 @@ export function appendAudit(entry, isoTimestamp) {
     fs.appendFileSync(logFile, `${JSON.stringify(record)}\n`);
   } catch {
     /* audit logging is best-effort and must never block the guard */
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Core business logic (extracted for CLI + hook reuse)
+ * ------------------------------------------------------------------ */
+
+function contextOutput(context) {
+  return {
+    hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: context },
+  };
+}
+
+/**
+ * Decide on a raw stdin payload and return the exact decision JSON to print.
+ * Never throws, never exits — fail-open by returning the FAILOPEN context.
+ */
+export function processHookInput(raw) {
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return { stdout: JSON.stringify(contextOutput(FAILOPEN_CONTEXT)) };
+  }
+  try {
+    const prompt = typeof payload.prompt === 'string' ? payload.prompt : '';
+    const sessionId =
+      typeof payload.session_id === 'string' && payload.session_id ? payload.session_id : 'unknown';
+    const hit = detect(prompt);
+    if (hit) {
+      appendAudit(
+        { session_id: sessionId, tier: hit.tier, category: hit.category },
+        new Date().toISOString(),
+      );
+      return { stdout: JSON.stringify({ decision: 'block', reason: hit.reason }) };
+    }
+    return { stdout: JSON.stringify(contextOutput(CLEAN_CONTEXT)) };
+  } catch {
+    return { stdout: JSON.stringify(contextOutput(FAILOPEN_CONTEXT)) };
   }
 }
 
@@ -374,59 +413,16 @@ function readStdin() {
   });
 }
 
-function emit(obj) {
-  process.stdout.write(JSON.stringify(obj));
-}
-
-function emitContext(context) {
-  emit({
-    hookSpecificOutput: {
-      hookEventName: 'UserPromptSubmit',
-      additionalContext: context,
-    },
-  });
-}
-
 async function main() {
   let raw = '';
   try {
     raw = await readStdin();
   } catch {
-    /* fall through to fail-open below */
+    /* fall through — processHookInput fails open on empty/unreadable input */
   }
-
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch {
-    // Fail-open + warn (org policy): never brick the prompt on unreadable input.
-    emitContext(FAILOPEN_CONTEXT);
-    process.exit(0);
-  }
-
-  try {
-    const prompt = typeof payload.prompt === 'string' ? payload.prompt : '';
-    const sessionId =
-      typeof payload.session_id === 'string' && payload.session_id ? payload.session_id : 'unknown';
-
-    const hit = detect(prompt);
-    if (hit) {
-      appendAudit(
-        { session_id: sessionId, tier: hit.tier, category: hit.category },
-        new Date().toISOString(),
-      );
-      emit({ decision: 'block', reason: hit.reason });
-      process.exit(0);
-    }
-
-    emitContext(CLEAN_CONTEXT);
-    process.exit(0);
-  } catch {
-    // Any unexpected internal error: stay consistent with the fail-open posture
-    // rather than bricking prompts. Surface a warning to the model as context.
-    emitContext(FAILOPEN_CONTEXT);
-    process.exit(0);
-  }
+  const { stdout } = processHookInput(raw);
+  process.stdout.write(stdout);
+  process.exit(0);
 }
 
 // Only run the hook when executed directly (so tests can import the detectors).

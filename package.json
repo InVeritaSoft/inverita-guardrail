@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "PHI-safety UserPromptSubmit guard for Claude Code (PixelCare Health)",
+  "bin": {
+    "inverita-guard": "bin/inverita-guard.mjs"
+  },
   "type": "module",
   "scripts": {
     "test": "node --test"
