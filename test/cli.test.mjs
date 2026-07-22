@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const BIN = path.resolve(HERE, '..', 'bin', 'inverita-guard.mjs');
+const BIN = path.resolve(HERE, '..', 'cli', 'inverita-guard.mjs');
 
 function run(args, input) {
   return spawnSync('node', [BIN, ...args], { input, encoding: 'utf8' });
