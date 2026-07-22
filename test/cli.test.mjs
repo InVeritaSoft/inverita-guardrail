@@ -1,0 +1,48 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const BIN = path.resolve(HERE, '..', 'bin', 'inverita-guard.mjs');
+
+function run(args, input) {
+  return spawnSync('node', [BIN, ...args], { input, encoding: 'utf8' });
+}
+
+test('default mode with piped stdin runs the guard and blocks PHI', () => {
+  const res = run([], JSON.stringify({ prompt: 'patient SSN is 123-45-6789', session_id: 's' }));
+  assert.equal(res.status, 0);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.decision, 'block');
+  assert.match(out.reason, /category: ssn_pattern/);
+});
+
+test('default mode passes a clean prompt', () => {
+  const res = run([], JSON.stringify({ prompt: 'refactor the scheduler', session_id: 's' }));
+  assert.equal(res.status, 0);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.decision, undefined);
+  assert.match(out.hookSpecificOutput.additionalContext, /healthcare-data project/i);
+});
+
+test('--version prints a semver and exits 0', () => {
+  const res = run(['--version']);
+  assert.equal(res.status, 0);
+  assert.match(res.stdout.trim(), /^\d+\.\d+\.\d+$/);
+});
+
+test('--help lists the subcommands and exits 0', () => {
+  const res = run(['--help']);
+  assert.equal(res.status, 0);
+  assert.match(res.stdout, /inverita-guard/);
+  assert.match(res.stdout, /check/);
+  assert.match(res.stdout, /doctor/);
+});
+
+test('unknown command exits 2', () => {
+  const res = run(['wat']);
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /unknown command/i);
+});
