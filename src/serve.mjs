@@ -23,8 +23,10 @@ export function createServer() {
       res.end(stdout);
     });
     req.on('error', () => {
-      res.writeHead(400);
-      res.end();
+      if (!res.headersSent) {
+        res.writeHead(400);
+        res.end();
+      }
     });
   });
 }

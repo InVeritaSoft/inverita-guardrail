@@ -72,3 +72,31 @@ test('non-POST/non-health returns 405', async () => {
     server.close();
   }
 });
+
+test('server survives request error (mid-flight destroy)', async () => {
+  const server = createServer();
+  const port = await listen(server);
+  try {
+    // Trigger a request error by destroying the socket mid-flight
+    await new Promise((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/' }, () => {
+        // Do nothing with response
+      });
+      req.on('error', () => {
+        // Expected error from destroying the socket
+        resolve();
+      });
+      req.write(JSON.stringify({ prompt: 'test' }));
+      req.destroy(); // Force the connection closed (triggers req error)
+    });
+
+    // Verify server is still alive with a clean POST request
+    const res = await request(port, 'POST', '/', JSON.stringify({ prompt: 'refactor the scheduler' }));
+    assert.equal(res.status, 200);
+    const out = JSON.parse(res.body);
+    assert.equal(out.decision, undefined);
+    assert.ok(out.hookSpecificOutput.additionalContext);
+  } finally {
+    server.close();
+  }
+});
