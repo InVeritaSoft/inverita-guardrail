@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
+import os from 'node:os';
 import process from 'node:process';
 import { processHookInput } from '../hooks/pre-prompt-guard.mjs';
 import { runCheck } from '../src/check.mjs';
+import { runDoctor } from '../src/doctor.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -68,6 +70,24 @@ if (cmd === undefined) {
     process.stdout.write('CLEAN\n');
   }
   process.exit(verdict.decision === 'block' ? 1 : 0);
+} else if (cmd === 'doctor') {
+  const json = argv.includes('--json');
+  const result = runDoctor({
+    env: process.env,
+    homedir: os.homedir(),
+    cwd: process.cwd(),
+    platform: process.platform,
+    nodeVersion: process.version,
+  });
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else {
+    for (const c of result.checks) {
+      process.stdout.write(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name}  (${c.detail})\n`);
+    }
+    process.stdout.write(`\n${result.ok ? 'OK: guard is healthy' : 'PROBLEM: see FAIL lines above'}\n`);
+  }
+  process.exit(result.ok ? 0 : 1);
 } else {
   process.stderr.write(`unknown command: ${cmd}\n`);
   printHelp();
