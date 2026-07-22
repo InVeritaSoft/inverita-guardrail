@@ -1,14 +1,39 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(HERE, '..', 'cli', 'inverita-guard.mjs');
+const HOOK = path.resolve(HERE, '..', 'hooks', 'pre-prompt-guard.mjs');
 
 function run(args, input) {
   return spawnSync('node', [BIN, ...args], { input, encoding: 'utf8' });
+}
+
+// Regression guard for the "block silently stops the prompt with no feedback"
+// bug: calling process.exit() right after process.stdout.write() truncates the
+// write when stdout is a pipe (always, under Claude Code), dropping the block
+// decision + reason. The entry points must set process.exitCode and let Node
+// drain the stream before exiting — never call process.exit() as a statement.
+// The race is timing/load-dependent and can't be forced deterministically, so
+// we assert the source invariant instead. (`^\s*process\.exit\(` matches only a
+// statement, not the `process.exitCode =` assignments or the `// process.exit()`
+// explanatory comments.)
+for (const [label, file] of [
+  ['cli/inverita-guard.mjs', BIN],
+  ['hooks/pre-prompt-guard.mjs', HOOK],
+]) {
+  test(`${label} never calls process.exit() (would truncate piped stdout)`, () => {
+    const src = fs.readFileSync(file, 'utf8');
+    assert.doesNotMatch(
+      src,
+      /^\s*process\.exit\(/m,
+      `${label} calls process.exit() as a statement — use process.exitCode so the stdout write drains`,
+    );
+  });
 }
 
 test('default mode with piped stdin runs the guard and blocks PHI', () => {

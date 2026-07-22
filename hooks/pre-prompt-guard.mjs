@@ -421,8 +421,14 @@ async function main() {
     /* fall through — processHookInput fails open on empty/unreadable input */
   }
   const { stdout } = processHookInput(raw);
+  // Do NOT call process.exit() here. process.exit() does not wait for a
+  // stdout write to drain when stdout is a pipe (always true when Claude
+  // Code spawns this hook) — if the write is buffered (backpressure), the
+  // decision JSON, including the user-facing `reason` on a block, can be
+  // silently dropped. Setting exitCode and letting Node exit naturally once
+  // the event loop is empty guarantees the write completes first.
   process.stdout.write(stdout);
-  process.exit(0);
+  process.exitCode = 0;
 }
 
 // Only run the hook when executed directly (so tests can import the detectors).

@@ -40,8 +40,11 @@ function printHelp() {
 async function guardMode() {
   const raw = await readStdin();
   const { stdout } = processHookInput(raw);
+  // Do NOT call process.exit() here — see the matching comment in
+  // hooks/pre-prompt-guard.mjs's main(). process.exit() can truncate a
+  // buffered stdout write to a pipe, silently dropping the block reason.
   process.stdout.write(stdout);
-  process.exit(0);
+  process.exitCode = 0;
 }
 
 const argv = process.argv.slice(2);
@@ -50,7 +53,7 @@ const cmd = argv[0];
 if (cmd === undefined) {
   if (process.stdin.isTTY) {
     printHelp();
-    process.exit(0);
+    process.exitCode = 0;
   } else {
     await guardMode();
   }
@@ -72,7 +75,7 @@ if (cmd === undefined) {
   } else {
     process.stdout.write('CLEAN\n');
   }
-  process.exit(verdict.decision === 'block' ? 1 : 0);
+  process.exitCode = verdict.decision === 'block' ? 1 : 0;
 } else if (cmd === 'doctor') {
   const json = argv.includes('--json');
   const result = runDoctor({
@@ -90,7 +93,7 @@ if (cmd === undefined) {
     }
     process.stdout.write(`\n${result.ok ? 'OK: guard is healthy' : 'PROBLEM: see FAIL lines above'}\n`);
   }
-  process.exit(result.ok ? 0 : 1);
+  process.exitCode = result.ok ? 0 : 1;
 } else if (cmd === 'serve') {
   const rest = argv.slice(1);
   const portIdx = rest.indexOf('--port');
@@ -127,9 +130,9 @@ if (cmd === undefined) {
       );
     }
   }
-  process.exit(0);
+  process.exitCode = 0;
 } else {
   process.stderr.write(`unknown command: ${cmd}\n`);
   printHelp();
-  process.exit(2);
+  process.exitCode = 2;
 }
