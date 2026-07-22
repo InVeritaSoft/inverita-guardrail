@@ -68,6 +68,46 @@ Every block appends one JSON line to `logs/audit.jsonl`:
 
 ---
 
+## CLI: `inverita-guard`
+
+The guard ships as a binary named `inverita-guard` — the command the managed
+hook invokes.
+
+### Install (per machine)
+
+```bash
+npm i -g github:InVeritaSoft/inverita-guardrail
+```
+
+npm creates the per-OS PATH shim (`inverita-guard` on Unix,
+`inverita-guard.cmd` on Windows). The guard then runs offline and instantly on
+every prompt.
+
+### Commands
+
+| Command | Purpose |
+|---------|---------|
+| `inverita-guard` | Guard mode: reads the hook JSON on stdin, prints the block/allow decision (exit 0). What the managed hook calls. |
+| `inverita-guard check "<prompt>"` | Test the detector against a prompt. Exit 1 if it would block. `--json` for machine output. |
+| `inverita-guard doctor` | Verify Node ≥18, `inverita-guard` on PATH, the hook is wired, and a detector smoke test. Exit 0 iff healthy. `--json` for aggregation. |
+| `inverita-guard serve [--host H] [--port N]` | Run the HTTP-hook endpoint (POST prompt → decision JSON, `GET /healthz`). |
+| `inverita-guard install [--managed] [--print]` | Wire the hook into `~/.claude/settings.json`; `--managed` emits the org managed-settings artifact; `--print` previews. |
+
+### Coverage detection (no MDM)
+
+`inverita-guard doctor --json` is exit-code driven — run it over SSH/your fleet
+tool to find machines where the guard isn't installed or wired. This is the
+detection lever when you don't have device management to guarantee the binary.
+
+### HTTP-hook variant
+
+`inverita-guard serve` exposes the same detector over HTTP for the zero-endpoint
+deployment. **Warning:** every prompt (possibly containing PHI) is POSTed to the
+endpoint — run it only inside your compliance boundary, over TLS, and don't log
+prompt bodies. Claude Code fails **open** on connection error/timeout.
+
+---
+
 ## Force-enforcement (for admins)
 
 Enforcement on the Claude Code CLI is delivered as a **managed hook**, not a
