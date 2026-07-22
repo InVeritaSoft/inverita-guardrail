@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import process from 'node:process';
 import { processHookInput } from '../hooks/pre-prompt-guard.mjs';
+import { runCheck } from '../src/check.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -52,6 +53,21 @@ if (cmd === undefined) {
   process.stdout.write(`${pkg.version}\n`);
 } else if (cmd === '--help' || cmd === '-h') {
   printHelp();
+} else if (cmd === 'check') {
+  const rest = argv.slice(1);
+  const json = rest.includes('--json');
+  const promptArg = rest.filter((a) => a !== '--json')[0];
+  let prompt = promptArg;
+  if (prompt === undefined && !process.stdin.isTTY) prompt = await readStdin();
+  const verdict = runCheck(prompt || '');
+  if (json) {
+    process.stdout.write(`${JSON.stringify(verdict)}\n`);
+  } else if (verdict.decision === 'block') {
+    process.stdout.write(`BLOCK  tier=${verdict.tier}  category=${verdict.category}\n`);
+  } else {
+    process.stdout.write('CLEAN\n');
+  }
+  process.exit(verdict.decision === 'block' ? 1 : 0);
 } else {
   process.stderr.write(`unknown command: ${cmd}\n`);
   printHelp();

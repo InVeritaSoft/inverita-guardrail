@@ -46,3 +46,25 @@ test('unknown command exits 2', () => {
   assert.equal(res.status, 2);
   assert.match(res.stderr, /unknown command/i);
 });
+
+test('check blocks PHI: exit 1 and reports category', () => {
+  const res = run(['check', 'patient SSN is 123-45-6789']);
+  assert.equal(res.status, 1);
+  assert.match(res.stdout, /BLOCK/);
+  assert.match(res.stdout, /ssn_pattern/);
+});
+
+test('check on a clean prompt: exit 0 and CLEAN', () => {
+  const res = run(['check', 'refactor the scheduler']);
+  assert.equal(res.status, 0);
+  assert.match(res.stdout, /CLEAN/);
+});
+
+test('check --json emits a structured verdict', () => {
+  const res = run(['check', '--json', 'prescribe 10mg twice daily']);
+  assert.equal(res.status, 1);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.decision, 'block');
+  assert.equal(out.tier, 2);
+  assert.equal(out.category, 'medication_dosage');
+});
