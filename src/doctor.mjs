@@ -46,7 +46,7 @@ function settingsSources(homedir, cwd, platform) {
   ];
 }
 
-export function runDoctor({ env, homedir, cwd, platform, nodeVersion }) {
+export function runDoctor({ env, homedir, cwd, platform, nodeVersion, detect: detectFn = detect }) {
   const checks = [];
 
   const major = parseInt(String(nodeVersion).replace(/^v/, '').split('.')[0], 10);
@@ -73,8 +73,8 @@ export function runDoctor({ env, homedir, cwd, platform, nodeVersion }) {
     detail: wired || 'no UserPromptSubmit hook referencing inverita-guard found',
   });
 
-  const blocks = !!detect('patient SSN is 123-45-6789');
-  const clean = detect('refactor the scheduler component') === null;
+  const blocks = !!detectFn('patient SSN is 123-45-6789');
+  const clean = detectFn('refactor the scheduler component') === null;
   checks.push({
     name: 'detector smoke test',
     ok: blocks && clean,

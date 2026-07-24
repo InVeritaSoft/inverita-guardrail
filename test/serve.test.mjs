@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createServer } from '../src/serve.mjs';
+import net from 'node:net';
+import { createServer, startServer } from '../src/serve.mjs';
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
@@ -21,6 +22,36 @@ function request(port, method, path, body) {
     req.end();
   });
 }
+
+test('startServer binds a real port and serves /healthz', async () => {
+  const server = startServer({ host: '127.0.0.1', port: 0 });
+  await new Promise((resolve) => server.once('listening', resolve));
+  const { port } = server.address();
+  try {
+    const res = await request(port, 'GET', '/healthz');
+    assert.equal(res.status, 200);
+    assert.equal(JSON.parse(res.body).status, 'ok');
+  } finally {
+    server.close();
+  }
+});
+
+test('startServer applies default host/port when called with no args', async () => {
+  // Covers the destructured defaults ({host,port} = {}). 8787 may be busy in
+  // some environments; tolerate EADDRINUSE, we only need the default branch run.
+  let server;
+  try {
+    server = startServer();
+    await new Promise((resolve, reject) => {
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+    assert.equal(server.address().port, 8787);
+    server.close();
+  } catch (err) {
+    assert.equal(err.code, 'EADDRINUSE');
+  }
+});
 
 test('POST with PHI returns a block decision', async () => {
   const server = createServer();
@@ -68,6 +99,34 @@ test('non-POST/non-health returns 405', async () => {
   try {
     const res = await request(port, 'GET', '/');
     assert.equal(res.status, 405);
+  } finally {
+    server.close();
+  }
+});
+
+test('request aborted before body completes hits the error handler (no response sent)', async () => {
+  const server = createServer();
+  const port = await listen(server);
+  try {
+    // Promise the 'end' never fires: declare a large Content-Length, send only
+    // part of the body, then abort. The request emits 'error'/'aborted' while
+    // res.headersSent is still false, exercising the writeHead(400) path.
+    await new Promise((resolve) => {
+      const sock = net.connect(port, '127.0.0.1', () => {
+        // Write a partial body under a larger Content-Length, then destroy the
+        // socket in the same tick so the server sees a hard reset before the
+        // body (and thus any response) completes — deterministic, no timer race.
+        sock.write(
+          'POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\nContent-Type: application/json\r\n\r\n{"prompt":"partial',
+        );
+        sock.destroy();
+      });
+      sock.on('close', resolve);
+      sock.on('error', () => {});
+    });
+    // Server is still healthy afterwards.
+    const res = await request(port, 'GET', '/healthz');
+    assert.equal(res.status, 200);
   } finally {
     server.close();
   }

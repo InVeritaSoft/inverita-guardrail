@@ -27,6 +27,31 @@ they reach Claude*. It ships two ways:
 
 ---
 
+## Quick start (developers)
+
+```bash
+# 1. Install the CLI (creates the per-OS `inverita-guard` PATH shim)
+npm i -g github:InVeritaSoft/inverita-guardrail
+
+# 2. Wire it into your own Claude Code settings (idempotent)
+inverita-guard install
+
+# 3. Confirm everything is healthy (Node ≥18, on PATH, hook wired, smoke test)
+inverita-guard doctor
+
+# 4. Try the detector on a prompt without involving Claude
+inverita-guard check "prescribe 10mg twice daily"   # → BLOCK  tier=2  category=medication_dosage
+inverita-guard check "refactor the scheduler"        # → CLEAN
+```
+
+Working on the guard itself instead of installing it? Clone the repo and run
+`npm test` (see [Testing](#testing)) — it has zero third-party dependencies.
+
+> On a team-managed machine the hook is delivered centrally and you don't run
+> step 2 yourself — see [Force-enforcement](#force-enforcement-for-admins).
+
+---
+
 ## What it does
 
 On every prompt (`UserPromptSubmit` hook, no matcher — fires on all prompts):
@@ -294,14 +319,21 @@ An automated suite lives in `test/` and uses Node's built-in test runner
 (`node:test`) — no third-party dependencies, matching the plugin's zero-dep
 design. It covers every Layer-1 and Layer-2 category, false-positive guards,
 tier precedence, the full stdin→stdout hook contract (block / clean /
-fail-open, always exit 0), and the audit log (metadata-only, no raw text, and
-size-cap rotation).
+fail-open, always exit 0), the audit log (metadata-only, no raw text, and
+size-cap rotation), and every CLI subcommand (including the interactive-TTY
+branches via the injectable `run(argv, io)`). The suite holds **100% line,
+branch, and function coverage**.
 
 ```bash
-npm test          # runs `node --test` with auto-discovery
-# or a single file:
-node --test test/guardrail.test.mjs
+npm test                                  # runs `node --test` with auto-discovery
+node --test test/guardrail.test.mjs       # a single file
+node --experimental-test-coverage --test  # with the coverage report
 ```
+
+A regression test also asserts that neither entry point calls `process.exit()`
+as a statement: `process.exit()` can truncate a buffered stdout write to a
+pipe, which would silently drop a block's `reason`. Both entry points set
+`process.exitCode` and let Node drain stdout before exiting.
 
 > Use `npm test` (or an explicit file path). `node --test test/` with a
 > trailing-slash directory arg fails on Node 25 — it tries to import the
@@ -355,11 +387,40 @@ check () { printf '{"prompt":%s,"session_id":"test","cwd":"."}' \
 
 ```
 inverita-guardrail/
-  .claude-plugin/plugin.json           # plugin manifest
-  hooks/hooks.json                     # registers the UserPromptSubmit hook
-  hooks/pre-prompt-guard.mjs           # detection + decision + audit logging
+  .claude-plugin/
+    marketplace.json                   # marketplace manifest (adds this repo as a plugin source)
+    plugin.json                        # plugin manifest
+  hooks/
+    hooks.json                         # registers the UserPromptSubmit hook
+    pre-prompt-guard.mjs               # detector + decision + audit log + hook entry point
+  cli/
+    inverita-guard.mjs                 # `inverita-guard` CLI (guard/check/doctor/serve/install)
+  src/                                 # CLI command implementations (importable, unit-tested)
+    check.mjs                          #   runCheck()      — detector verdict for a prompt
+    doctor.mjs                         #   runDoctor()     — install/wiring health checks
+    serve.mjs                          #   createServer()/startServer() — HTTP-hook endpoint
+    install.mjs                        #   settings/managed-settings builders + writers
+    stdin.mjs                          #   readStream()    — fail-open stream reader (shared)
+  test/                                # node:test suites (zero-dependency, 100% coverage)
   managed-settings/
     managed-settings.example.json      # org enforcement template
+  package.json                         # `bin: inverita-guard`, `files` allowlist, `npm test`
   logs/.gitkeep                        # audit.jsonl written here at runtime (gitignored)
   README.md
 ```
+
+### How the code is organized (for contributors)
+
+- **Detection is one file.** All PHI/clinical patterns live in
+  `hooks/pre-prompt-guard.mjs` as the exported `LAYER1`, `LAYER2`, and
+  `MRN_PATTERNS` config objects, plus the pure `detect()` and
+  `processHookInput()` functions. Import them directly in tests — no spawning
+  required.
+- **The CLI is thin and injectable.** `cli/inverita-guard.mjs` exports an
+  `async run(argv, io)` that performs no direct process IO: every stream, env
+  var, filesystem home, and the server factory is funnelled through the `io`
+  object, and `run()` returns `{ code }` (plus `{ server }` for `serve`) instead
+  of touching `process.exitCode`. The module only auto-dispatches when executed
+  directly, so tests import `run()` and drive it under any terminal/stdin
+  condition in-process. Each subcommand's real work lives in the matching
+  `src/*.mjs` module.

@@ -35,6 +35,42 @@ test('processHookInput fails open on malformed input', () => {
   assert.match(out.hookSpecificOutput.additionalContext, /could not be read/i);
 });
 
+test('processHookInput fails open when the parsed payload is not an object', () => {
+  // Valid JSON (`null`) parses, then reading `.prompt` throws — the inner
+  // try/catch must still fail open rather than crash the hook.
+  const { stdout } = processHookInput('null');
+  const out = JSON.parse(stdout);
+  assert.equal(out.decision, undefined);
+  assert.match(out.hookSpecificOutput.additionalContext, /could not be read/i);
+});
+
+test('processHookInput defaults missing prompt/session_id fields', () => {
+  // Exercises the false branches of the prompt/session_id type guards: an
+  // object with neither field is treated as an empty, clean prompt.
+  const { stdout } = processHookInput(JSON.stringify({ other: 1 }));
+  const out = JSON.parse(stdout);
+  assert.equal(out.decision, undefined);
+  assert.match(out.hookSpecificOutput.additionalContext, /healthcare-data project/i);
+});
+
+test('appendAudit swallows filesystem errors (best-effort logging)', () => {
+  // Point the log dir at a path whose parent is a regular file so mkdirSync
+  // throws ENOTDIR — the catch must swallow it and return without throwing.
+  const base = tmpDir();
+  const notADir = path.join(base, 'blocker');
+  fs.writeFileSync(notADir, 'x');
+  const prev = process.env.INVERITA_GUARD_LOG_DIR;
+  process.env.INVERITA_GUARD_LOG_DIR = path.join(notADir, 'sub');
+  try {
+    assert.doesNotThrow(() =>
+      appendAudit({ session_id: 's', tier: 1, category: 'ssn_pattern' }, '2026-07-24T00:00:00.000Z'),
+    );
+  } finally {
+    if (prev === undefined) delete process.env.INVERITA_GUARD_LOG_DIR;
+    else process.env.INVERITA_GUARD_LOG_DIR = prev;
+  }
+});
+
 test('appendAudit honors INVERITA_GUARD_LOG_DIR override', () => {
   const dir = tmpDir();
   const prev = process.env.INVERITA_GUARD_LOG_DIR;

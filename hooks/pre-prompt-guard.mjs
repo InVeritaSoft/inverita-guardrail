@@ -30,6 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readStream } from '../src/stdin.mjs';
 
 /* ------------------------------------------------------------------ *
  * Configuration
@@ -401,25 +402,9 @@ export function processHookInput(raw) {
  * Hook entry point
  * ------------------------------------------------------------------ */
 
-function readStdin() {
-  return new Promise((resolve) => {
-    let data = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (chunk) => {
-      data += chunk;
-    });
-    process.stdin.on('end', () => resolve(data));
-    process.stdin.on('error', () => resolve(data));
-  });
-}
-
 async function main() {
-  let raw = '';
-  try {
-    raw = await readStdin();
-  } catch {
-    /* fall through — processHookInput fails open on empty/unreadable input */
-  }
+  // readStream never rejects — it resolves with whatever it has on 'error'.
+  const raw = await readStream(process.stdin);
   const { stdout } = processHookInput(raw);
   // Do NOT call process.exit() here. process.exit() does not wait for a
   // stdout write to drain when stdout is a pipe (always true when Claude
