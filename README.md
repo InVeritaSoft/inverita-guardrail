@@ -133,6 +133,29 @@ prompt bodies. Claude Code fails **open** on connection error/timeout.
 
 ---
 
+## Self-heal skill
+
+The plugin ships a Claude Code skill, **`guard-selfheal`**
+(`skills/guard-selfheal/SKILL.md`), that diagnoses and repairs the guard from
+inside Claude Code — useful when a developer reports the guard isn't blocking,
+or that MCP/hooks broke after a rollout. Invoke it by asking Claude to "check /
+fix / heal the inverita guard" (or `/guard-selfheal` if exposed as a command).
+
+It is **safe by construction** — the skill's instructions forbid anything that
+could break a developer's Claude Code:
+
+- **read-only diagnosis first** (`inverita-guard doctor`, `/status`, `/mcp`);
+- repairs are **additive and idempotent** (prefers `inverita-guard install`),
+  and it **backs up** any settings file before editing;
+- it **never** edits managed settings, **never** removes the developer's own
+  hooks/MCP/skills/agents, and **never** adds `strictPluginOnlyCustomization`
+  (the flag that disables user MCP);
+- managed-scope problems are **escalated to the admin**, not silently patched;
+- for GUI-launched VS Code it repairs the hook to the PATH-robust **exec form**
+  (`"command": "node", "args": ["<abs>/hooks/pre-prompt-guard.mjs"]`).
+
+---
+
 ## Force-enforcement (for admins)
 
 Enforcement on the Claude Code CLI is delivered as a **managed hook**, not a
@@ -419,6 +442,8 @@ inverita-guardrail/
     serve.mjs                          #   createServer()/startServer() — HTTP-hook endpoint
     install.mjs                        #   settings/managed-settings builders + writers
     stdin.mjs                          #   readStream()    — fail-open stream reader (shared)
+  skills/
+    guard-selfheal/SKILL.md            # safe diagnose + repair skill (never breaks Claude usage)
   test/                                # node:test suites (zero-dependency, 100% coverage)
   managed-settings/
     managed-settings.example.json      # org enforcement template
