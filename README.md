@@ -209,10 +209,16 @@ The command path must match your step-1 deploy path (Linux shown):
       }
     ]
   },
-  "allowManagedHooksOnly": true,
-  "strictPluginOnlyCustomization": true
+  "allowManagedHooksOnly": true
 }
 ```
+
+> [!WARNING]
+> Do **not** add `"strictPluginOnlyCustomization": true` unless you intend a
+> full customization lockdown. That flag also blocks **user/project MCP
+> servers, skills, and agents** — it will break developers' own MCP setups, and
+> it is **not** needed to enforce this guard. See
+> [Why `allowManagedHooksOnly`](#why-allowmanagedhooksonly-is-required-for-real-enforcement).
 
 ### Verify it's active
 
@@ -240,8 +246,20 @@ authoritative `UserPromptSubmit` hook.
 without it means the guard runs, but the developer's own hooks run too and the
 setup is not tamper-resistant. With both the managed hook *and*
 `allowManagedHooksOnly`, there is no developer-level way to silently opt out.
-Add `strictPluginOnlyCustomization` to also block skills/agents/hooks/MCP from
-user and project sources entirely.
+
+`allowManagedHooksOnly` scopes to **hooks only** — it does **not** touch MCP
+servers, skills, or agents, so developers keep their own MCP setups. This is
+what the guard ships by default (`inverita-guard install --managed`).
+
+> [!CAUTION]
+> `strictPluginOnlyCustomization` is a **separate, much broader** lockdown that
+> restricts skills, agents, hooks, **and MCP servers** to plugin/managed
+> sources — it will **disable developers' own user/project MCP servers**. It is
+> **not** required for this guard and is **off by default**. Enable it only for
+> a deliberate full-customization lockdown, and take its exact shape (it can be
+> scoped per customization type, e.g. `mcp`) from the official
+> [managed MCP docs](https://code.claude.com/docs/en/managed-mcp.md) — not from
+> this README.
 
 There is deliberately **no bypass flag, no debug env var that disables the
 hook, and no local per-developer override** anywhere in this guard.

@@ -14,11 +14,13 @@ function tmpFile() {
   return path.join(dir, 'settings.json');
 }
 
-test('buildManagedSettings has the hook and both enforcement flags', () => {
+test('buildManagedSettings enforces the hook without the MCP-breaking lockdown flag', () => {
   const m = buildManagedSettings();
   assert.equal(m.allowManagedHooksOnly, true);
-  assert.equal(m.strictPluginOnlyCustomization, true);
   assert.equal(m.hooks.UserPromptSubmit[0].hooks[0].command, 'inverita-guard');
+  // strictPluginOnlyCustomization would also disable user/project MCP servers,
+  // skills, and agents — it must NOT be part of the default enforcement.
+  assert.equal('strictPluginOnlyCustomization' in m, false);
 });
 
 test('mergeHookIntoSettings preserves unrelated keys and is idempotent', () => {

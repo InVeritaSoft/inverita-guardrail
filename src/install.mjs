@@ -6,10 +6,15 @@ export function buildUserHookGroup() {
 }
 
 export function buildManagedSettings() {
+  // Only `allowManagedHooksOnly` is needed to enforce the guard as the sole
+  // UserPromptSubmit hook. We deliberately do NOT emit
+  // `strictPluginOnlyCustomization` here: that flag also blocks user/project
+  // skills, agents, hooks AND MCP servers, which breaks developers' own MCP
+  // setups. It is opt-in total lockdown, documented in the example file — not
+  // part of the default guard enforcement.
   return {
     hooks: { UserPromptSubmit: [buildUserHookGroup()] },
     allowManagedHooksOnly: true,
-    strictPluginOnlyCustomization: true,
   };
 }
 
