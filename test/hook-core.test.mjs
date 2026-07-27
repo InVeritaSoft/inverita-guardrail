@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { processHookInput, appendAudit } from '../hooks/pre-prompt-guard.mjs';
+import { processHookInput, appendAudit, decideAction } from '../hooks/pre-prompt-guard.mjs';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'guard-core-'));
@@ -26,6 +26,20 @@ test('processHookInput passes a clean prompt with additionalContext', () => {
   assert.equal(out.decision, undefined);
   assert.equal(out.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
   assert.match(out.hookSpecificOutput.additionalContext, /healthcare-data project/i);
+});
+
+test('decideAction: null on no hit, Layer 1 always blocks, Layer 2 depends on mode', () => {
+  assert.equal(decideAction(null, 'enforce'), null);
+  assert.equal(decideAction({ tier: 1 }, 'advisory'), 'block');
+  assert.equal(decideAction({ tier: 1 }, 'enforce'), 'block');
+  assert.equal(decideAction({ tier: 2 }, 'enforce'), 'block');
+  assert.equal(decideAction({ tier: 2 }, 'advisory'), 'warn');
+});
+
+test('processHookInput handles a payload with no cwd (mode resolves without it)', () => {
+  // Layer 1 blocks regardless of mode; exercises the cwd-absent branch.
+  const { stdout } = processHookInput(JSON.stringify({ prompt: 'SSN 123-45-6789' }));
+  assert.equal(JSON.parse(stdout).decision, 'block');
 });
 
 test('processHookInput fails open on malformed input', () => {

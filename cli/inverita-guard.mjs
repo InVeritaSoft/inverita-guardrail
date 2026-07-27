@@ -6,6 +6,7 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import { processHookInput } from '../hooks/pre-prompt-guard.mjs';
 import { runCheck } from '../src/check.mjs';
+import { resolveMode, MODES } from '../src/config.mjs';
 import { runDoctor } from '../src/doctor.mjs';
 import { startServer } from '../src/serve.mjs';
 import { buildManagedSettings, installToUserSettings, mergeHookIntoSettings } from '../src/install.mjs';
@@ -85,20 +86,29 @@ export async function run(argv, io = defaultIo()) {
   if (cmd === 'check') {
     const rest = argv.slice(1);
     const json = rest.includes('--json');
-    const promptArg = rest.filter((a) => a !== '--json')[0];
+    const modeIdx = rest.indexOf('--mode');
+    // --mode forces the mode; otherwise resolve from env + the project tree.
+    const mode =
+      modeIdx >= 0 && MODES.includes(rest[modeIdx + 1])
+        ? rest[modeIdx + 1]
+        : resolveMode({ cwd: io.cwd, env: io.env });
+    const flags = new Set(['--json', '--mode', mode]);
+    const promptArg = rest.filter((a, i) => !flags.has(a) && rest[i - 1] !== '--mode')[0];
     let prompt = promptArg;
     // Only fall back to stdin when a prompt wasn't supplied AND input is piped;
     // on a bare terminal there is nothing to read and we'd hang.
     if (prompt === undefined && !io.isTTY) prompt = await io.readStdin();
-    const verdict = runCheck(prompt || '');
+    const verdict = runCheck(prompt || '', mode);
     if (json) {
       io.write(`${JSON.stringify(verdict)}\n`);
-    } else if (verdict.decision === 'block') {
-      io.write(`BLOCK  tier=${verdict.tier}  category=${verdict.category}\n`);
+    } else if (verdict.action === 'block') {
+      io.write(`BLOCK  tier=${verdict.tier}  category=${verdict.category}  (mode: ${mode})\n`);
+    } else if (verdict.action === 'warn') {
+      io.write(`WARN   tier=${verdict.tier}  category=${verdict.category}  (mode: ${mode}, allowed)\n`);
     } else {
-      io.write('CLEAN\n');
+      io.write(`CLEAN  (mode: ${mode})\n`);
     }
-    return { code: verdict.decision === 'block' ? 1 : 0 };
+    return { code: verdict.action === 'block' ? 1 : 0 };
   }
 
   if (cmd === 'doctor') {

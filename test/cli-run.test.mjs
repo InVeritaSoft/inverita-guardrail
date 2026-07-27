@@ -58,14 +58,42 @@ test('check with no arg on a TTY does not read stdin (uses empty prompt)', async
   assert.match(out.stdout, /CLEAN/);
 });
 
-test('check with no arg and piped stdin reads the prompt', async () => {
+test('check with no arg and piped stdin reads the prompt (enforce blocks L2)', async () => {
   const { io, out } = harness({
     isTTY: false,
     readStdin: async () => 'prescribe 10mg twice daily',
   });
-  const { code } = await run(['check', '--json'], io);
+  const { code } = await run(['check', '--json', '--mode', 'enforce'], io);
   assert.equal(code, 1);
-  assert.equal(JSON.parse(out.stdout).category, 'medication_dosage');
+  const v = JSON.parse(out.stdout);
+  assert.equal(v.category, 'medication_dosage');
+  assert.equal(v.action, 'block');
+});
+
+test('check resolves mode from io (env override) when --mode is absent', async () => {
+  const { io, out } = harness({
+    isTTY: false,
+    env: { INVERITA_GUARD_MODE: 'enforce' },
+    readStdin: async () => 'prescribe 10mg twice daily',
+  });
+  const { code } = await run(['check', '--json'], io);
+  assert.equal(code, 1, 'env INVERITA_GUARD_MODE=enforce should make L2 block');
+  assert.equal(JSON.parse(out.stdout).action, 'block');
+});
+
+test('check (text mode) prints a WARN line for advisory Layer 2', async () => {
+  const { io, out } = harness();
+  const { code } = await run(['check', '--mode', 'advisory', 'prescribe 10mg twice daily'], io);
+  assert.equal(code, 0);
+  assert.match(out.stdout, /^WARN\s+tier=2\s+category=medication_dosage\s+\(mode: advisory, allowed\)/m);
+});
+
+test('check with an invalid --mode value falls back to resolved mode', async () => {
+  // modeIdx >= 0 but the value is not a valid mode → resolveMode() is used.
+  const { io, out } = harness({ env: {} });
+  const { code } = await run(['check', '--mode', 'bogus', 'patient SSN is 123-45-6789'], io);
+  assert.equal(code, 1, 'Layer 1 still blocks regardless of the resolved mode');
+  assert.match(out.stdout, /BLOCK/);
 });
 
 test('serve returns a server handle and writes the banner', async () => {

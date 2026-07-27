@@ -1,0 +1,6 @@
+{
+  "_comment": "Drop this file at a repo root (or any parent dir) to set the guard's enforcement mode for that project tree. The nearest such file walking up from the prompt's cwd wins, unless the INVERITA_GUARD_MODE env var is set (which always overrides). Layer 1 identifiers (SSN/MRN/DOB/etc.) block in every mode; only the broad Layer 2 clinical net is affected.",
+  "_comment_mode": "\"enforce\" = block Layer 1 AND Layer 2. \"advisory\" = block Layer 1, only warn (allow through) on Layer 2. Default when no file/env is present is \"advisory\".",
+  "mode": "enforce",
+  "_comment_shorthand": "Alternatively, omit \"mode\" and set \"healthcare\": true — that marker is treated as \"enforce\"."
+}

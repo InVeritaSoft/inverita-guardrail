@@ -43,11 +43,15 @@ const MAX_LOG_BYTES = 5 * 1024 * 1024; // must match the hook's cap
 // Run the hook as a child process with the given stdin, isolated to `root`
 // (so audit writes never touch the real logs/ dir). `raw` overrides the
 // JSON payload to exercise malformed input.
-function runHook(prompt, { root, raw, sessionId = 'test-sess' } = {}) {
+function runHook(prompt, { root, raw, sessionId = 'test-sess', mode = 'enforce' } = {}) {
   const input =
     raw !== undefined ? raw : JSON.stringify({ prompt, session_id: sessionId, cwd: '.' });
   const env = { ...process.env };
   if (root) env.CLAUDE_PLUGIN_ROOT = root;
+  // Default to enforce so Layer 2 blocking is exercised (mirrors an org that
+  // pins INVERITA_GUARD_MODE=enforce via managed settings). Advisory behavior
+  // is covered by its own tests below.
+  if (mode) env.INVERITA_GUARD_MODE = mode;
   const res = spawnSync('node', [HOOK], { input, encoding: 'utf8', env });
   return {
     status: res.status,
@@ -256,6 +260,36 @@ test('valid JSON with a missing/non-string prompt is treated as clean, exit 0', 
 });
 
 /* ------------------------------------------------------------------ *
+ * 5b. Mode: advisory downgrades Layer 2 to a warning; Layer 1 still blocks
+ * ------------------------------------------------------------------ */
+
+test('advisory mode does NOT block a Layer 2 prompt — it injects a caution', () => {
+  const root = tmpRoot();
+  const { status, json } = runHook('prescribe 10mg twice daily', { root, mode: 'advisory' });
+  assert.equal(status, 0);
+  assert.equal(json.decision, undefined, 'advisory Layer 2 must not carry a block decision');
+  assert.match(json.hookSpecificOutput.additionalContext, /Advisory \(mode: advisory\)/);
+  assert.match(json.hookSpecificOutput.additionalContext, /category: medication_dosage/);
+});
+
+test('advisory mode still hard-blocks a Layer 1 identifier', () => {
+  const root = tmpRoot();
+  const { status, json } = runHook('patient SSN is 123-45-6789', { root, mode: 'advisory' });
+  assert.equal(status, 0);
+  assert.equal(json.decision, 'block', 'Layer 1 identifiers block in every mode');
+  assert.match(json.reason, /category: ssn_pattern/);
+});
+
+test('advisory Layer 2 audits action=warn (not a block)', () => {
+  const root = tmpRoot();
+  runHook('68 year old male with COPD', { root, mode: 'advisory' });
+  const [rec] = readAudit(root);
+  assert.equal(rec.tier, 2);
+  assert.equal(rec.mode, 'advisory');
+  assert.equal(rec.action, 'warn');
+});
+
+/* ------------------------------------------------------------------ *
  * 6. Audit log — metadata only, never raw text
  * ------------------------------------------------------------------ */
 
@@ -265,10 +299,15 @@ test('a block writes exactly one metadata-only audit record', () => {
   const records = readAudit(root);
   assert.equal(records.length, 1);
   const rec = records[0];
-  assert.deepEqual(Object.keys(rec).sort(), ['category', 'session_id', 'tier', 'ts']);
+  assert.deepEqual(
+    Object.keys(rec).sort(),
+    ['action', 'category', 'mode', 'session_id', 'tier', 'ts'],
+  );
   assert.equal(rec.session_id, 'sess-42');
   assert.equal(rec.tier, 1);
   assert.equal(rec.category, 'ssn_pattern');
+  assert.equal(rec.mode, 'enforce');
+  assert.equal(rec.action, 'block');
   assert.equal(typeof rec.ts, 'string');
   assert.ok(!Number.isNaN(Date.parse(rec.ts)), 'ts must be a valid ISO timestamp');
 });

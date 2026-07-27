@@ -90,13 +90,30 @@ test('check on a clean prompt: exit 0 and CLEAN', () => {
   assert.match(res.stdout, /CLEAN/);
 });
 
-test('check --json emits a structured verdict', () => {
-  const res = run(['check', '--json', 'prescribe 10mg twice daily']);
+test('check --json emits a structured verdict (enforce blocks Layer 2)', () => {
+  const res = run(['check', '--json', '--mode', 'enforce', 'prescribe 10mg twice daily']);
   assert.equal(res.status, 1);
   const out = JSON.parse(res.stdout);
-  assert.equal(out.decision, 'block');
+  assert.equal(out.action, 'block');
   assert.equal(out.tier, 2);
   assert.equal(out.category, 'medication_dosage');
+  assert.equal(out.mode, 'enforce');
+});
+
+test('check --mode advisory downgrades Layer 2 to a warning (exit 0)', () => {
+  const res = run(['check', '--json', '--mode', 'advisory', 'prescribe 10mg twice daily']);
+  assert.equal(res.status, 0, 'advisory Layer 2 must not fail the check');
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.action, 'warn');
+  assert.equal(out.tier, 2);
+  assert.equal(out.category, 'medication_dosage');
+});
+
+test('check always blocks a Layer 1 identifier even in advisory mode', () => {
+  const res = run(['check', '--mode', 'advisory', 'patient SSN is 123-45-6789']);
+  assert.equal(res.status, 1);
+  assert.match(res.stdout, /BLOCK/);
+  assert.match(res.stdout, /ssn_pattern/);
 });
 
 test('doctor --json returns a result object and a nonzero exit when unwired', () => {

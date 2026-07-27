@@ -1,6 +1,6 @@
 {
   "name": "inverita-guardrail",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Blocks prompts containing likely PHI or unnecessary clinical specifics before they reach Claude; enforced org-wide for medical projects",
   "author": {
     "name": "InVerita",

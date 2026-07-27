@@ -34,6 +34,16 @@ settings hierarchy and hooks).
    — report the finding and the exact manual step instead.
 7. **A block is not a bug.** If the guard correctly blocked a PHI-shaped prompt,
    that is expected behavior. Do not "heal" a working guard into silence.
+8. **Advisory mode is not a fault.** If a developer reports that clinical wording
+   (Layer 2) is *not* being blocked, first check the effective mode
+   (`INVERITA_GUARD_MODE` env, or the nearest `.inverita-guard.json` walking up
+   from the repo). In `advisory` mode Layer 2 only warns by design — that is
+   correct, not broken. Layer 1 identifiers (SSN/MRN/DOB/…) block in every mode;
+   if a Layer 1 identifier is genuinely not blocked, that IS a real fault
+   (proceed to diagnose). To make Layer 2 block for a healthcare repo, add
+   `{"mode":"enforce"}` (or `{"healthcare":true}`) to `.inverita-guard.json`, or
+   have the org pin `INVERITA_GUARD_MODE=enforce` in managed settings — never
+   weaken enforcement to "fix" a report.
 
 ## Step 1 — Diagnose (read-only)
 

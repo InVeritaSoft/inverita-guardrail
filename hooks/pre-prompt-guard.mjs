@@ -31,6 +31,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readStream } from '../src/stdin.mjs';
+import { resolveMode } from '../src/config.mjs';
 
 /* ------------------------------------------------------------------ *
  * Configuration
@@ -51,6 +52,20 @@ const FAILOPEN_CONTEXT =
   '[inverita-guardrail] The prompt payload could not be read, so the PHI pre-check was ' +
   'skipped for this message. Treat this as a healthcare-data context: assume ' +
   'synthetic/anonymized data only and neither request nor emit any real PHI.';
+
+/**
+ * Advisory-mode caution for a Layer 2 match: the prompt is allowed through, but
+ * the model is told what tripped the broad clinical net so it can steer the
+ * developer toward synthetic data without blocking legitimate work.
+ */
+function buildWarnContext(hit) {
+  return (
+    `[${PLUGIN_NAME}] Advisory (mode: advisory) — clinical specificity detected ` +
+    `(category: ${hit.category}), not blocked. ${hit.body}\n` +
+    'Use synthetic or fully anonymized data; this project is not in enforce mode, so ' +
+    'this is a caution rather than a block.'
+  );
+}
 
 /* ------------------------------------------------------------------ *
  * MRN / patient-identifier patterns (exported for per-EHR tuning)
@@ -299,17 +314,39 @@ function buildReason(tier, category, body) {
  * { tier, category, reason } or null when the prompt is clean.
  * Layer 1 takes precedence over Layer 2.
  */
+/**
+ * Given a detection hit and the effective mode, decide the action:
+ *  - null  → no hit
+ *  - 'block' → Layer 1 always, or Layer 2 under enforce mode
+ *  - 'warn'  → Layer 2 under advisory mode (allowed through with a caution)
+ */
+export function decideAction(hit, mode) {
+  if (!hit) return null;
+  if (hit.tier === 1) return 'block';
+  return mode === 'enforce' ? 'block' : 'warn';
+}
+
 export function detect(prompt) {
   const text = typeof prompt === 'string' ? prompt : '';
   if (!text) return null;
   for (const rule of LAYER1) {
     if (rule.match(text)) {
-      return { tier: 1, category: rule.category, reason: buildReason(1, rule.category, rule.body) };
+      return {
+        tier: 1,
+        category: rule.category,
+        body: rule.body,
+        reason: buildReason(1, rule.category, rule.body),
+      };
     }
   }
   for (const rule of LAYER2) {
     if (rule.match(text)) {
-      return { tier: 2, category: rule.category, reason: buildReason(2, rule.category, rule.body) };
+      return {
+        tier: 2,
+        category: rule.category,
+        body: rule.body,
+        reason: buildReason(2, rule.category, rule.body),
+      };
     }
   }
   return null;
@@ -352,6 +389,8 @@ export function appendAudit(entry, isoTimestamp) {
       session_id: entry.session_id,
       tier: entry.tier,
       category: entry.category,
+      mode: entry.mode,
+      action: entry.action,
     };
     fs.appendFileSync(logFile, `${JSON.stringify(record)}\n`);
   } catch {
@@ -384,13 +423,20 @@ export function processHookInput(raw) {
     const prompt = typeof payload.prompt === 'string' ? payload.prompt : '';
     const sessionId =
       typeof payload.session_id === 'string' && payload.session_id ? payload.session_id : 'unknown';
+    const cwd = typeof payload.cwd === 'string' ? payload.cwd : undefined;
+    const mode = resolveMode({ cwd, env: process.env });
     const hit = detect(prompt);
     if (hit) {
+      const action = decideAction(hit, mode);
       appendAudit(
-        { session_id: sessionId, tier: hit.tier, category: hit.category },
+        { session_id: sessionId, tier: hit.tier, category: hit.category, mode, action },
         new Date().toISOString(),
       );
-      return { stdout: JSON.stringify({ decision: 'block', reason: hit.reason }) };
+      if (action === 'block') {
+        return { stdout: JSON.stringify({ decision: 'block', reason: hit.reason }) };
+      }
+      // advisory Layer 2: allow the prompt, inject a caution instead of blocking
+      return { stdout: JSON.stringify(contextOutput(buildWarnContext(hit))) };
     }
     return { stdout: JSON.stringify(contextOutput(CLEAN_CONTEXT)) };
   } catch {

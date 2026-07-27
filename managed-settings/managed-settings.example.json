@@ -20,6 +20,11 @@
     ]
   },
 
+  "_comment_env_pin_mode": "RECOMMENDED for healthcare fleets. The guard defaults to 'advisory' mode (Layer 1 identifiers still hard-block; the broad Layer 2 clinical net only warns). Pin full enforcement here so it cannot be relaxed per-project: INVERITA_GUARD_MODE=enforce makes Layer 2 block too. Managed 'env' is applied to the Claude Code session and inherited by the hook. Remove this block to leave mode resolution to each project's .inverita-guard.json.",
+  "env": {
+    "INVERITA_GUARD_MODE": "enforce"
+  },
+
   "_comment_allowManagedHooksOnly": "REQUIRED for real enforcement. When true, Claude Code executes ONLY hooks that originate from managed settings / managed plugins and ignores hooks defined in user or project settings. Without this a developer could register a competing UserPromptSubmit hook or otherwise interfere; with it, the guard above is the authoritative prompt hook. This is the line between 'recommended' and 'enforced'.",
   "allowManagedHooksOnly": true,
 

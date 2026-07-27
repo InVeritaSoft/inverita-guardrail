@@ -56,17 +56,46 @@ Working on the guard itself instead of installing it? Clone the repo and run
 
 On every prompt (`UserPromptSubmit` hook, no matcher — fires on all prompts):
 
-| Tier | What it catches | Confidence | Action |
-|------|-----------------|------------|--------|
-| **Layer 1 — identifiers** | SSNs, MRN/patient-ID tokens, DOB next to a name, email + clinical terms, insurance/policy numbers | High | **Block** |
-| **Layer 2 — clinical specifics** | ICD-code-shaped tokens, medication + dosage, lab/vital values, clinical-narrative phrasing, age + condition | Lower / broad net | **Block** (strict posture) |
-| No match | — | — | Allow + inject a "healthcare context, synthetic data only" reminder |
+| Tier | What it catches | Confidence | `enforce` | `advisory` |
+|------|-----------------|------------|-----------|------------|
+| **Layer 1 — identifiers** | SSNs, MRN/patient-ID tokens, DOB next to a name, email + clinical terms, insurance/policy numbers | High | **Block** | **Block** |
+| **Layer 2 — clinical specifics** | ICD-code-shaped tokens, medication + dosage, lab/vital values, clinical-narrative phrasing, age + condition | Lower / broad net | **Block** | **Warn** (allowed through) |
+| No match | — | — | Allow + reminder | Allow + reminder |
 
-Both tiers block by default. The **reason message names the tier and category**
-(`identifier: ssn_pattern` vs `clinical specificity: medication_dosage`) so
-developers can self-correct quickly, and Layer 2 blocks are framed as
-"clinical specificity" (non-shaming, likely-false-positive-aware) rather than
-"you leaked PHI".
+The **reason message names the tier and category** (`identifier: ssn_pattern` vs
+`clinical specificity: medication_dosage`) so developers can self-correct
+quickly, and Layer 2 blocks are framed as "clinical specificity" (non-shaming,
+likely-false-positive-aware) rather than "you leaked PHI".
+
+### Enforcement modes (flexibility)
+
+The guard is **project-scoped**: it hard-enforces where it matters and stays out
+of the way elsewhere. **Layer 1 identifiers always block, in every mode** — real
+identifiers must never leave. Only the broad **Layer 2** net changes:
+
+- **`enforce`** — Layer 1 + Layer 2 both block (full strictness).
+- **`advisory`** — Layer 1 blocks; Layer 2 does **not** block. Instead it injects
+  a caution into the prompt context (the model is told what tripped and to use
+  synthetic data) and lets the prompt through. This removes Layer 2
+  false-positive friction on non-medical work.
+
+**Mode resolution (highest priority first):**
+
+1. **`INVERITA_GUARD_MODE`** env var (`enforce` | `advisory`). An org can pin
+   `enforce` fleet-wide by setting it in managed settings — this is the
+   recommended way to guarantee full enforcement on healthcare machines.
+2. The nearest **`.inverita-guard.json`** walking up from the project, e.g.
+   `{ "mode": "enforce" }` or the shorthand `{ "healthcare": true }` (→ enforce).
+   See `examples/.inverita-guard.json`.
+3. **Default: `advisory`.**
+
+Test how a prompt resolves in either mode with the CLI:
+
+```bash
+inverita-guard check --mode enforce  "prescribe 10mg twice daily"   # BLOCK
+inverita-guard check --mode advisory "prescribe 10mg twice daily"   # WARN (allowed)
+inverita-guard check "patient SSN is 123-45-6789"                    # BLOCK in ANY mode
+```
 
 If the hook cannot read its input payload, it **fails open with a warning**
 (injects a context note that the check was skipped) rather than bricking the
@@ -78,11 +107,12 @@ developer's Claude Code.
 Every block appends one JSON line to `logs/audit.jsonl`:
 
 ```json
-{"ts":"2026-07-14T09:15:22.104Z","session_id":"abc123","tier":1,"category":"ssn_pattern"}
+{"ts":"2026-07-14T09:15:22.104Z","session_id":"abc123","tier":1,"category":"ssn_pattern","mode":"enforce","action":"block"}
 ```
 
-- **Metadata only.** It records timestamp, session id, tier, and category —
-  **never the matched text or the original prompt.**
+- **Metadata only.** It records timestamp, session id, tier, category, the
+  resolved `mode`, and the `action` (`block` / `warn`) — **never the matched
+  text or the original prompt.**
 - **Local only.** Nothing is transmitted anywhere. The org's compliance
   reviewer pulls it manually from the developer's machine.
 - **Capped + rotated.** At 5 MB, `audit.jsonl` is rotated to `audit.jsonl.1`
@@ -113,7 +143,7 @@ every prompt.
 | Command | Purpose |
 |---------|---------|
 | `inverita-guard` | Guard mode: reads the hook JSON on stdin, prints the block/allow decision (exit 0). What the managed hook calls. |
-| `inverita-guard check "<prompt>"` | Test the detector against a prompt. Exit 1 if it would block. `--json` for machine output. |
+| `inverita-guard check "<prompt>"` | Test the detector against a prompt. Exit 1 if it would **block** (0 for warn/clean). `--json` for machine output; `--mode enforce\|advisory` to force the mode (otherwise resolved from env + `.inverita-guard.json`). |
 | `inverita-guard doctor` | Verify Node ≥18, `inverita-guard` on PATH, the hook is wired, and a detector smoke test. Exit 0 iff healthy. `--json` for aggregation. |
 | `inverita-guard serve [--host H] [--port N]` | Run the HTTP-hook endpoint (POST prompt → decision JSON, `GET /healthz`). |
 | `inverita-guard install [--managed] [--print]` | Wire the hook into `~/.claude/settings.json`; `--managed` emits the org managed-settings artifact; `--print` previews. |
@@ -442,8 +472,11 @@ inverita-guardrail/
     serve.mjs                          #   createServer()/startServer() — HTTP-hook endpoint
     install.mjs                        #   settings/managed-settings builders + writers
     stdin.mjs                          #   readStream()    — fail-open stream reader (shared)
+    config.mjs                         #   resolveMode()   — enforce/advisory mode resolution
   skills/
     guard-selfheal/SKILL.md            # safe diagnose + repair skill (never breaks Claude usage)
+  examples/
+    .inverita-guard.json               # per-project mode marker template
   test/                                # node:test suites (zero-dependency, 100% coverage)
   managed-settings/
     managed-settings.example.json      # org enforcement template
