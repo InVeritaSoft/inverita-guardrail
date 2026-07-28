@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { run } from '../cli/inverita-guard.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { run, isInvokedDirectly } from '../cli/inverita-guard.mjs';
 
 // A capturing IO harness so run() can be exercised in-process under any
 // terminal/stdin condition — including a real TTY, which a spawned subprocess
@@ -118,4 +119,27 @@ test('unknown command returns exit code 2 and prints help', async () => {
   assert.equal(code, 2);
   assert.match(out.stderr, /unknown command/);
   assert.match(out.stdout, /Usage:/);
+});
+
+test('isInvokedDirectly matches through a symlink (global npm install)', () => {
+  // Node loads the module via its realpath, so import.meta.url is the realpath.
+  // A symlinked bin (process.argv[1]) must still be recognized as direct
+  // invocation — otherwise every subcommand is a silent no-op.
+  const cliReal = path.resolve(fileURLToPath(import.meta.url), '..', '..', 'cli', 'inverita-guard.mjs');
+  const moduleUrl = pathToFileURL(cliReal).href;
+
+  // Direct (non-symlinked) invocation still matches.
+  assert.equal(isInvokedDirectly(cliReal, moduleUrl), true);
+
+  // A symlink pointing at the real CLI must resolve to the same realpath.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-link-'));
+  const link = path.join(dir, 'inverita-guard');
+  fs.symlinkSync(cliReal, link);
+  assert.equal(isInvokedDirectly(link, moduleUrl), true);
+
+  // Imported as a module (no argv[1]) is not a direct invocation.
+  assert.equal(isInvokedDirectly(undefined, moduleUrl), false);
+
+  // A non-existent argv[1] falls back to the raw path (no throw) and won't match.
+  assert.equal(isInvokedDirectly(path.join(dir, 'does-not-exist'), moduleUrl), false);
 });

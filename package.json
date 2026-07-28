@@ -1,6 +1,6 @@
 {
   "name": "inverita-guardrail",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "PHI-safety UserPromptSubmit guard for Claude Code (PixelCare Health)",
   "bin": {

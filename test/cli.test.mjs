@@ -120,7 +120,7 @@ test('doctor --json returns a result object and a nonzero exit when unwired', ()
   const res = run(['doctor', '--json']);
   assert.ok(res.status === 0 || res.status === 1, 'doctor exits 0 or 1');
   const out = JSON.parse(res.stdout);
-  assert.ok(Array.isArray(out.checks) && out.checks.length === 4);
+  assert.ok(Array.isArray(out.checks) && out.checks.length === 5);
   assert.equal(typeof out.ok, 'boolean');
 });
 
@@ -157,7 +157,13 @@ test('doctor (text mode) reports OK and exits 0 when fully wired', () => {
     }),
   );
   const binDir = tmpHome();
-  fs.writeFileSync(path.join(binDir, 'inverita-guard'), '#!/bin/sh\n', { mode: 0o755 });
+  // A stub that actually dispatches a block decision, so the end-to-end check
+  // (which really executes this bin in guard mode) sees a working guard.
+  fs.writeFileSync(
+    path.join(binDir, 'inverita-guard'),
+    '#!/bin/sh\ncat >/dev/null\nprintf \'{"decision":"block","reason":"stub"}\'\n',
+    { mode: 0o755 },
+  );
   const res = run(['doctor'], undefined, {
     env: { ...process.env, HOME: home, PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
   });

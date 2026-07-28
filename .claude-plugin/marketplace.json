@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "InVerita compliance plugins for Claude Code",
-    "version": "0.1.7"
+    "version": "0.1.8"
   },
   "plugins": [
     {

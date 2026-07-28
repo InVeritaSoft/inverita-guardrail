@@ -36,7 +36,7 @@ npm i -g github:InVeritaSoft/inverita-guardrail
 # 2. Wire it into your own Claude Code settings (idempotent)
 inverita-guard install
 
-# 3. Confirm everything is healthy (Node ≥18, on PATH, hook wired, smoke test)
+# 3. Confirm everything is healthy (Node ≥18, on PATH, hook wired, smoke test, end-to-end dispatch)
 inverita-guard doctor
 
 # 4. Try the detector on a prompt without involving Claude
@@ -144,7 +144,7 @@ every prompt.
 |---------|---------|
 | `inverita-guard` | Guard mode: reads the hook JSON on stdin, prints the block/allow decision (exit 0). What the managed hook calls. |
 | `inverita-guard check "<prompt>"` | Test the detector against a prompt. Exit 1 if it would **block** (0 for warn/clean). `--json` for machine output; `--mode enforce\|advisory` to force the mode (otherwise resolved from env + `.inverita-guard.json`). |
-| `inverita-guard doctor` | Verify Node ≥18, `inverita-guard` on PATH, the hook is wired, and a detector smoke test. Exit 0 iff healthy. `--json` for aggregation. |
+| `inverita-guard doctor` | Verify Node ≥18, `inverita-guard` on PATH, the hook is wired, a detector smoke test, and an **end-to-end dispatch** check that actually runs the wired CLI on a synthetic-PHI probe and confirms it blocks. Exit 0 iff healthy. `--json` for aggregation. |
 | `inverita-guard serve [--host H] [--port N]` | Run the HTTP-hook endpoint (POST prompt → decision JSON, `GET /healthz`). |
 | `inverita-guard install [--managed] [--print]` | Wire the hook into `~/.claude/settings.json`; `--managed` emits the org managed-settings artifact; `--print` previews. |
 
@@ -500,3 +500,10 @@ inverita-guardrail/
   directly, so tests import `run()` and drive it under any terminal/stdin
   condition in-process. Each subcommand's real work lives in the matching
   `src/*.mjs` module.
+
+  Direct-invocation detection compares **realpaths**: `npm i -g` installs the bin
+  as a symlink, and Node loads the module via its realpath, so `import.meta.url`
+  (realpath) never equals `pathToFileURL(process.argv[1])` (the symlink). The
+  guard resolves `realpathSync(process.argv[1])` before comparing — without that,
+  every subcommand silently no-ops on a global install and the wired hook fails
+  open. `inverita-guard doctor`'s end-to-end check exists to catch exactly this.

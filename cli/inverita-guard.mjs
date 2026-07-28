@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -175,7 +175,25 @@ export async function run(argv, io = defaultIo()) {
 
 // Only dispatch when executed directly, so tests can import run() without it
 // firing on module load.
-const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+//
+// npm installs the bin as a SYMLINK (e.g. /usr/local/bin/inverita-guard →
+// <prefix>/lib/node_modules/inverita-guardrail/cli/inverita-guard.mjs). Node
+// loads the module via its realpath, so import.meta.url is the realpath while
+// process.argv[1] is still the symlink. Comparing them directly never matches,
+// so we resolve argv[1]'s realpath first — otherwise every subcommand becomes a
+// silent no-op on a symlinked (global npm) install.
+export function isInvokedDirectly(argv1, moduleUrl) {
+  if (!argv1) return false;
+  let resolved = argv1;
+  try {
+    resolved = realpathSync(argv1);
+  } catch {
+    // argv1 may not exist as a file (unusual); fall back to the raw path.
+  }
+  return moduleUrl === pathToFileURL(resolved).href;
+}
+
+const invokedDirectly = isInvokedDirectly(process.argv[1], import.meta.url);
 if (invokedDirectly) {
   const { code, server } = await run(process.argv.slice(2));
   if (server) {

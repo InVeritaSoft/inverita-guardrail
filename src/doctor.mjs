@@ -1,6 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { detect } from '../hooks/pre-prompt-guard.mjs';
+
+// A synthetic identifier (never a real SSN) used to prove the wired CLI actually
+// dispatches and blocks end-to-end — not just that a command string is present.
+const PROBE_PAYLOAD = JSON.stringify({
+  prompt: 'patient SSN is 123-45-6789',
+  session_id: 'doctor-probe',
+  cwd: '.',
+});
+
+// Execute the resolved CLI in guard mode with the probe on stdin. This is the
+// exact path that silently no-op'd on symlinked (global npm) installs, so a real
+// invocation is the only way to catch a dispatch regression.
+export function probeDispatch(bin) {
+  const r = spawnSync(bin, [], { input: PROBE_PAYLOAD, encoding: 'utf8', timeout: 5000 });
+  return { stdout: r.stdout || '', status: r.status ?? null, error: r.error || null };
+}
 
 export function whichInveritaGuard(env, platform) {
   const raw = env.PATH || env.Path || '';
@@ -46,7 +63,15 @@ function settingsSources(homedir, cwd, platform) {
   ];
 }
 
-export function runDoctor({ env, homedir, cwd, platform, nodeVersion, detect: detectFn = detect }) {
+export function runDoctor({
+  env,
+  homedir,
+  cwd,
+  platform,
+  nodeVersion,
+  detect: detectFn = detect,
+  probe: probeFn = probeDispatch,
+}) {
   const checks = [];
 
   const major = parseInt(String(nodeVersion).replace(/^v/, '').split('.')[0], 10);
@@ -80,6 +105,39 @@ export function runDoctor({ env, homedir, cwd, platform, nodeVersion, detect: de
     ok: blocks && clean,
     detail: blocks && clean ? 'block+clean OK' : 'detector misbehaving',
   });
+
+  // End-to-end: actually run the CLI in guard mode and confirm it emits a block.
+  // Catches the silent-no-op dispatch bug that a presence-only check misses.
+  if (!bin) {
+    checks.push({
+      name: 'CLI dispatches (end-to-end)',
+      ok: false,
+      detail: 'skipped: CLI not on PATH',
+    });
+  } else {
+    let dispatchOk = false;
+    let detail;
+    try {
+      const { stdout, status, error } = probeFn(bin);
+      if (error) {
+        detail = `could not run CLI: ${error.message || error}`;
+      } else {
+        let decision;
+        try {
+          decision = JSON.parse(stdout)?.decision;
+        } catch {
+          /* non-JSON or empty stdout → silent no-op */
+        }
+        dispatchOk = decision === 'block';
+        detail = dispatchOk
+          ? 'CLI blocked the probe as expected'
+          : `CLI did not block the probe (status=${status}, stdout=${JSON.stringify(stdout.slice(0, 80))})`;
+      }
+    } catch (e) {
+      detail = `probe threw: ${e.message}`;
+    }
+    checks.push({ name: 'CLI dispatches (end-to-end)', ok: dispatchOk, detail });
+  }
 
   return { ok: checks.every((c) => c.ok), checks };
 }

@@ -3,11 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runDoctor, whichInveritaGuard, hookWiredIn } from '../src/doctor.mjs';
+import { fileURLToPath } from 'node:url';
+import { runDoctor, whichInveritaGuard, hookWiredIn, probeDispatch } from '../src/doctor.mjs';
 
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'guard-doctor-'));
 }
+
+// A probe stub that pretends the CLI dispatched and blocked (the healthy case),
+// so tests need not spawn a real subprocess.
+const blockingProbe = () => ({ stdout: JSON.stringify({ decision: 'block' }), status: 0, error: null });
 
 test('hookWiredIn detects a UserPromptSubmit hook referencing inverita-guard', () => {
   const settings = {
@@ -50,7 +55,7 @@ test('runDoctor picks the darwin and win32 managed-settings paths', () => {
       nodeVersion: 'v20.0.0',
     });
     assert.equal(res.ok, false);
-    assert.equal(res.checks.length, 4);
+    assert.equal(res.checks.length, 5);
   }
 });
 
@@ -84,9 +89,10 @@ test('runDoctor is ok when all checks pass', () => {
     cwd: tmp(),
     platform: 'linux',
     nodeVersion: 'v18.19.0',
+    probe: blockingProbe,
   });
   assert.equal(res.ok, true);
-  assert.equal(res.checks.length, 4);
+  assert.equal(res.checks.length, 5);
 });
 
 test('runDoctor flags a misbehaving detector via the smoke-test check', () => {
@@ -113,4 +119,112 @@ test('runDoctor fails when the hook is not wired', () => {
     nodeVersion: 'v18.0.0',
   });
   assert.equal(res.ok, false);
+});
+
+function withBin() {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'inverita-guard'), '#!/bin/sh\n', { mode: 0o755 });
+  return dir;
+}
+
+test('dispatch check is skipped (not ok) when the CLI is not on PATH', () => {
+  const res = runDoctor({
+    env: { PATH: tmp() }, // empty → no bin
+    homedir: tmp(),
+    cwd: tmp(),
+    platform: 'linux',
+    nodeVersion: 'v20.0.0',
+  });
+  const d = res.checks.find((c) => c.name === 'CLI dispatches (end-to-end)');
+  assert.equal(d.ok, false);
+  assert.match(d.detail, /not on PATH/);
+});
+
+test('dispatch check fails on a silent no-op (empty stdout — the original bug)', () => {
+  const res = runDoctor({
+    env: { PATH: withBin() },
+    homedir: tmp(),
+    cwd: tmp(),
+    platform: 'linux',
+    nodeVersion: 'v20.0.0',
+    probe: () => ({ stdout: '', status: 0, error: null }), // dispatched nothing
+  });
+  const d = res.checks.find((c) => c.name === 'CLI dispatches (end-to-end)');
+  assert.equal(d.ok, false);
+  assert.match(d.detail, /did not block/);
+});
+
+test('dispatch check reports a probe that could not run the CLI', () => {
+  const res = runDoctor({
+    env: { PATH: withBin() },
+    homedir: tmp(),
+    cwd: tmp(),
+    platform: 'linux',
+    nodeVersion: 'v20.0.0',
+    probe: () => ({ stdout: '', status: null, error: new Error('ENOENT') }),
+  });
+  const d = res.checks.find((c) => c.name === 'CLI dispatches (end-to-end)');
+  assert.equal(d.ok, false);
+  assert.match(d.detail, /could not run CLI: ENOENT/);
+});
+
+test('dispatch check surfaces a probe that throws', () => {
+  const res = runDoctor({
+    env: { PATH: withBin() },
+    homedir: tmp(),
+    cwd: tmp(),
+    platform: 'linux',
+    nodeVersion: 'v20.0.0',
+    probe: () => {
+      throw new Error('boom');
+    },
+  });
+  const d = res.checks.find((c) => c.name === 'CLI dispatches (end-to-end)');
+  assert.equal(d.ok, false);
+  assert.match(d.detail, /probe threw: boom/);
+});
+
+test('probeDispatch on a missing binary returns empty stdout, null status, an error', () => {
+  // Exercises the defensive fallbacks (stdout||'', status??null, error||null)
+  // via a real spawn that fails to exec.
+  const r = probeDispatch(path.join(tmp(), 'nope-not-here'));
+  assert.equal(r.stdout, '');
+  assert.equal(r.status, null);
+  assert.ok(r.error, 'spawn error is surfaced');
+});
+
+test('dispatch check falls back to the raw error when it has no .message', () => {
+  const res = runDoctor({
+    env: { PATH: withBin() },
+    homedir: tmp(),
+    cwd: tmp(),
+    platform: 'linux',
+    nodeVersion: 'v20.0.0',
+    probe: () => ({ stdout: '', status: null, error: 'bare-string-error' }),
+  });
+  const d = res.checks.find((c) => c.name === 'CLI dispatches (end-to-end)');
+  assert.match(d.detail, /could not run CLI: bare-string-error/);
+});
+
+test('dispatch check treats a JSON "null" body as a non-block (no-op)', () => {
+  const res = runDoctor({
+    env: { PATH: withBin() },
+    homedir: tmp(),
+    cwd: tmp(),
+    platform: 'linux',
+    nodeVersion: 'v20.0.0',
+    probe: () => ({ stdout: 'null', status: 0, error: null }),
+  });
+  const d = res.checks.find((c) => c.name === 'CLI dispatches (end-to-end)');
+  assert.equal(d.ok, false);
+  assert.match(d.detail, /did not block/);
+});
+
+test('probeDispatch actually runs the real CLI end-to-end and blocks PHI', () => {
+  // No stub: spawn the genuine executable CLI (shebang) so the real dispatch
+  // path — the one that silently no-op'd before the fix — is exercised.
+  const cli = path.resolve(fileURLToPath(import.meta.url), '..', '..', 'cli', 'inverita-guard.mjs');
+  const { stdout, error } = probeDispatch(cli);
+  assert.equal(error, null);
+  assert.equal(JSON.parse(stdout).decision, 'block');
 });
