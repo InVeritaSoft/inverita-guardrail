@@ -12,7 +12,8 @@
     "src",
     "skills",
     "examples",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "type": "module",
   "scripts": {
