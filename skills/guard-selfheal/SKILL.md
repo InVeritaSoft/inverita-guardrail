@@ -1,6 +1,6 @@
 ---
 name: guard-selfheal
-description: Diagnose and safely repair the inverita-guardrail PHI guard. Use when the guard seems inactive, misconfigured, or not blocking; when a developer reports Claude Code / MCP / hooks broke after the guard rollout; when verifying the guard is wired correctly (CLI or VS Code extension); or when someone asks to "check", "fix", "heal", or "doctor" the guard. Read-only diagnosis first; repairs are additive, idempotent, and never disable the user's Claude Code.
+description: Diagnose and safely repair the inverita-guardrail PHI guard. Use when the guard seems inactive, misconfigured, or not blocking; when a developer reports Claude Code / MCP / hooks broke after the guard rollout; when verifying the guard is wired correctly (CLI or VS Code extension); when a developer reports a recurring Layer-2 false positive and wants a project exception added; or when someone asks to "check", "fix", "heal", or "doctor" the guard. Read-only diagnosis first; repairs (including exceptions) are additive, idempotent, Layer-2-only, and never disable the user's Claude Code.
 ---
 
 # inverita-guardrail: self-diagnose & self-heal
@@ -44,6 +44,16 @@ settings hierarchy and hooks).
    `{"mode":"enforce"}` (or `{"healthcare":true}`) to `.inverita-guard.json`, or
    have the org pin `INVERITA_GUARD_MODE=enforce` in managed settings — never
    weaken enforcement to "fix" a report.
+9. **Exceptions are Layer-2-only, and always via `inverita-guard exceptions`.**
+   A repeated Layer 2 false positive (e.g. a pharmacy app that legitimately
+   discusses dosages) can get a project-scoped exception — but never a Layer 1
+   identifier (SSN/MRN/DOB/email+clinical/insurance): those are a hard safety
+   floor and the CLI structurally refuses to except them (and the guard's read
+   path drops any Layer-1 category found in a hand-edited config, so even
+   direct file edits can't bypass this). Always use the CLI
+   (`inverita-guard exceptions add <category> --reason "..."`), never hand-edit
+   `.inverita-guard.json`'s `exceptions` array — the CLI validates the category
+   and requires a reason so the exception stays auditable.
 
 ## Step 1 — Diagnose (read-only)
 
@@ -108,6 +118,32 @@ Apply only the fix for each failing check. Re-run `inverita-guard doctor` after.
   reinstalling the guard (fix B) or re-deploying the managed copy, and report the
   `detail` string.
 
+## Step 2b — Add a reasoned exception (only for a genuine Layer-2 false positive)
+
+Use this when a developer reports that a *specific, recurring* Layer-2 category
+is blocking or warning on legitimate, non-PHI work in their project (e.g. a
+pharmacy app that legitimately discusses medication doses) — not for a one-off
+prompt they could just reword, and never for a Layer 1 identifier hit (that is
+rule 7/8 territory, not an exception).
+
+1. Identify the exact category from the block/warn message (e.g.
+   `category: medication_dosage`) or `inverita-guard check "<prompt>" --json`.
+2. Confirm it is a Layer-2 category. If it's Layer 1
+   (`ssn_pattern`/`mrn_pattern`/`dob_name_proximity`/`email_clinical`/`insurance_policy`),
+   stop — do not except it. Explain that the prompt likely contains something
+   that needs to be replaced with synthetic data instead.
+3. Get a short, real reason from the developer (why this category is expected
+   in this project) — the CLI requires one, and it is what a compliance
+   reviewer will read later.
+4. Run: `inverita-guard exceptions add <category> --reason "<their reason>"`
+   (writes to `.inverita-guard.json` in the current directory; back up first
+   per rule 4 if one already exists and you're touching it by hand for any
+   other reason).
+5. Confirm: `inverita-guard exceptions list` and `inverita-guard check "<their
+   original prompt>"` — it should print `EXCEPTED`, not `BLOCK`/`WARN`.
+
+To undo: `inverita-guard exceptions remove <category>`.
+
 ## Step 3 — Confirm
 
 Re-run `inverita-guard doctor` (or `--json`) and show the user the now-green
@@ -120,5 +156,8 @@ guard in a half-edited state.
 - Will not disable, bypass, or weaken the guard.
 - Will not edit managed settings or remove the developer's MCP/hooks/skills.
 - Will not add `strictPluginOnlyCustomization`.
+- Will not add an exception for a Layer-1 category, and will not hand-edit
+  `.inverita-guard.json`'s `exceptions` array — always the CLI, always
+  Layer-2-only, always with a reason.
 - Will not upgrade Node or run global installs on the user's behalf without
   telling them exactly what runs.

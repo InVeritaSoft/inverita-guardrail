@@ -6,7 +6,14 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import { processHookInput } from '../hooks/pre-prompt-guard.mjs';
 import { runCheck } from '../src/check.mjs';
-import { resolveMode, MODES } from '../src/config.mjs';
+import {
+  resolveMode,
+  MODES,
+  resolveExceptionCategories,
+  readProjectExceptions,
+  addProjectException,
+  removeProjectException,
+} from '../src/config.mjs';
 import { runDoctor } from '../src/doctor.mjs';
 import { startServer } from '../src/serve.mjs';
 import { buildManagedSettings, installToUserSettings, mergeHookIntoSettings } from '../src/install.mjs';
@@ -22,6 +29,9 @@ const HELP =
   `  inverita-guard doctor          Verify install + hook wiring (exit 0 if healthy)\n` +
   `  inverita-guard serve           Run the HTTP-hook endpoint\n` +
   `  inverita-guard install         Wire the hook into ~/.claude/settings.json\n` +
+  `  inverita-guard exceptions list                          Show this project's active exceptions\n` +
+  `  inverita-guard exceptions add <category> --reason "..."  Except a Layer-2 category (never Layer 1)\n` +
+  `  inverita-guard exceptions remove <category>              Remove a project exception\n` +
   `  inverita-guard --version\n` +
   `  inverita-guard --help\n`;
 
@@ -98,17 +108,64 @@ export async function run(argv, io = defaultIo()) {
     // Only fall back to stdin when a prompt wasn't supplied AND input is piped;
     // on a bare terminal there is nothing to read and we'd hang.
     if (prompt === undefined && !io.isTTY) prompt = await io.readStdin();
-    const verdict = runCheck(prompt || '', mode);
+    const exceptions = resolveExceptionCategories({ cwd: io.cwd });
+    const verdict = runCheck(prompt || '', mode, exceptions);
     if (json) {
       io.write(`${JSON.stringify(verdict)}\n`);
     } else if (verdict.action === 'block') {
-      io.write(`BLOCK  tier=${verdict.tier}  category=${verdict.category}  (mode: ${mode})\n`);
+      io.write(`BLOCK    tier=${verdict.tier}  category=${verdict.category}  (mode: ${mode})\n`);
     } else if (verdict.action === 'warn') {
-      io.write(`WARN   tier=${verdict.tier}  category=${verdict.category}  (mode: ${mode}, allowed)\n`);
+      io.write(`WARN     tier=${verdict.tier}  category=${verdict.category}  (mode: ${mode}, allowed)\n`);
+    } else if (verdict.action === 'excepted') {
+      io.write(`EXCEPTED tier=${verdict.tier}  category=${verdict.category}  (project exception, allowed)\n`);
     } else {
-      io.write(`CLEAN  (mode: ${mode})\n`);
+      io.write(`CLEAN    (mode: ${mode})\n`);
     }
     return { code: verdict.action === 'block' ? 1 : 0 };
+  }
+
+  if (cmd === 'exceptions') {
+    const sub = argv[1];
+    const json = argv.includes('--json');
+
+    if (sub === 'list') {
+      const exceptions = readProjectExceptions(io.cwd);
+      if (json) {
+        io.write(`${JSON.stringify(exceptions)}\n`);
+      } else if (exceptions.length === 0) {
+        io.write('No project exceptions configured.\n');
+      } else {
+        for (const e of exceptions) {
+          io.write(`${e.category}  —  ${e.reason || '(no reason given)'}\n`);
+        }
+      }
+      return { code: 0 };
+    }
+
+    if (sub === 'add') {
+      const category = argv[2];
+      const reasonIdx = argv.indexOf('--reason');
+      const reason = reasonIdx >= 0 ? argv[reasonIdx + 1] : undefined;
+      try {
+        addProjectException(io.cwd, category, reason);
+      } catch (e) {
+        io.writeErr(`${e.message}\n`);
+        return { code: 2 };
+      }
+      io.write(`added exception: ${category}\n`);
+      return { code: 0 };
+    }
+
+    if (sub === 'remove') {
+      const category = argv[2];
+      const { removed } = removeProjectException(io.cwd, category);
+      io.write(removed ? `removed exception: ${category}\n` : `no exception found for: ${category}\n`);
+      return { code: 0 };
+    }
+
+    io.writeErr(`unknown exceptions subcommand: ${sub}\n`);
+    io.write(HELP);
+    return { code: 2 };
   }
 
   if (cmd === 'doctor') {

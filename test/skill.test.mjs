@@ -24,3 +24,10 @@ test('guard-selfheal never instructs unsafe actions on managed settings', () => 
   assert.match(body, /strictPluginOnlyCustomization/);
   assert.match(body, /[Bb]ack ?up/);
 });
+
+test('guard-selfheal never instructs excepting a Layer-1 category or hand-editing exceptions', () => {
+  const body = fs.readFileSync(SKILL, 'utf8');
+  assert.match(body, /never except|do not except|not except it/i);
+  assert.match(body, /inverita-guard exceptions add/);
+  assert.match(body, /never hand-edit/i);
+});

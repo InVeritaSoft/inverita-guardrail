@@ -97,6 +97,92 @@ test('check with an invalid --mode value falls back to resolved mode', async () 
   assert.match(out.stdout, /BLOCK/);
 });
 
+test('check (text mode) prints an EXCEPTED line for a project exception', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-cwd-'));
+  fs.writeFileSync(
+    path.join(dir, '.inverita-guard.json'),
+    JSON.stringify({ exceptions: [{ category: 'medication_dosage', reason: 'pharmacy app' }] }),
+  );
+  const { io, out } = harness({ cwd: dir });
+  const { code } = await run(['check', '--mode', 'enforce', 'prescribe 10mg twice daily'], io);
+  assert.equal(code, 0, 'an excepted category must not be treated as a block');
+  assert.match(out.stdout, /^EXCEPTED\s+tier=2\s+category=medication_dosage\s+\(project exception, allowed\)/m);
+});
+
+test('exceptions list: reports none configured, then the added ones as JSON', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-cwd-'));
+  const { io: io1, out: out1 } = harness({ cwd: dir });
+  await run(['exceptions', 'list'], io1);
+  assert.match(out1.stdout, /No project exceptions configured/);
+
+  fs.writeFileSync(
+    path.join(dir, '.inverita-guard.json'),
+    JSON.stringify({ exceptions: [{ category: 'icd_code', reason: 'billing app' }] }),
+  );
+  const { io: io2, out: out2 } = harness({ cwd: dir });
+  const { code } = await run(['exceptions', 'list', '--json'], io2);
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(out2.stdout), [{ category: 'icd_code', reason: 'billing app' }]);
+});
+
+test('exceptions list (text mode) prints category and reason', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-cwd-'));
+  fs.writeFileSync(
+    path.join(dir, '.inverita-guard.json'),
+    JSON.stringify({ exceptions: [{ category: 'icd_code', reason: 'billing app' }] }),
+  );
+  const { io, out } = harness({ cwd: dir });
+  await run(['exceptions', 'list'], io);
+  assert.match(out.stdout, /icd_code.*billing app/);
+});
+
+test('exceptions add: succeeds for a Layer-2 category with a reason', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-cwd-'));
+  const { io, out } = harness({ cwd: dir });
+  const { code } = await run(['exceptions', 'add', 'medication_dosage', '--reason', 'pharmacy app'], io);
+  assert.equal(code, 0);
+  assert.match(out.stdout, /added exception: medication_dosage/);
+  const written = JSON.parse(fs.readFileSync(path.join(dir, '.inverita-guard.json'), 'utf8'));
+  assert.deepEqual(written.exceptions, [{ category: 'medication_dosage', reason: 'pharmacy app' }]);
+});
+
+test('exceptions add: refuses a Layer-1 category and exits 2', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-cwd-'));
+  const { io, out } = harness({ cwd: dir });
+  const { code } = await run(['exceptions', 'add', 'ssn_pattern', '--reason', 'trust me'], io);
+  assert.equal(code, 2);
+  assert.match(out.stderr, /never be excepted/);
+  assert.equal(fs.existsSync(path.join(dir, '.inverita-guard.json')), false);
+});
+
+test('exceptions remove: removes an existing exception', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-cwd-'));
+  fs.writeFileSync(
+    path.join(dir, '.inverita-guard.json'),
+    JSON.stringify({ exceptions: [{ category: 'icd_code', reason: 'a' }] }),
+  );
+  const { io, out } = harness({ cwd: dir });
+  const { code } = await run(['exceptions', 'remove', 'icd_code'], io);
+  assert.equal(code, 0);
+  assert.match(out.stdout, /removed exception: icd_code/);
+});
+
+test('exceptions remove: reports a no-op when the category is absent', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-cwd-'));
+  const { io, out } = harness({ cwd: dir });
+  const { code } = await run(['exceptions', 'remove', 'icd_code'], io);
+  assert.equal(code, 0);
+  assert.match(out.stdout, /no exception found for: icd_code/);
+});
+
+test('exceptions: unknown subcommand exits 2 and prints help', async () => {
+  const { io, out } = harness();
+  const { code } = await run(['exceptions', 'bogus'], io);
+  assert.equal(code, 2);
+  assert.match(out.stderr, /unknown exceptions subcommand/);
+  assert.match(out.stdout, /Usage:/);
+});
+
 test('serve returns a server handle and writes the banner', async () => {
   let opts;
   const fakeServer = { fake: true };

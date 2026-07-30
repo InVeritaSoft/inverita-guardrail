@@ -31,7 +31,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readStream } from '../src/stdin.mjs';
-import { resolveMode } from '../src/config.mjs';
+import { resolveMode, resolveExceptionCategories } from '../src/config.mjs';
 
 /* ------------------------------------------------------------------ *
  * Configuration
@@ -64,6 +64,20 @@ function buildWarnContext(hit) {
     `(category: ${hit.category}), not blocked. ${hit.body}\n` +
     'Use synthetic or fully anonymized data; this project is not in enforce mode, so ' +
     'this is a caution rather than a block.'
+  );
+}
+
+/**
+ * A Layer-2 hit that this project has an approved, reasoned exception for
+ * (`.inverita-guard.json` → `exceptions`). Layer 1 identifiers can never reach
+ * this path — see resolveExceptionCategories / readProjectExceptions.
+ */
+function buildExceptionContext(hit) {
+  return (
+    `[${PLUGIN_NAME}] Exception applied (category: ${hit.category}) — allowed for this project ` +
+    `per .inverita-guard.json, not blocked. ${hit.body}\n` +
+    'This project has an approved, reasoned exception for this Layer-2 category. Real PHI must ' +
+    'still never be entered; Layer-1 identifiers (SSN/MRN/DOB/etc.) are never exceptable.'
   );
 }
 
@@ -427,6 +441,15 @@ export function processHookInput(raw) {
     const mode = resolveMode({ cwd, env: process.env });
     const hit = detect(prompt);
     if (hit) {
+      // Exceptions only ever apply to Layer 2 — a Layer 1 hit reaches
+      // decideAction() unconditionally, so identifiers can never be excepted.
+      if (hit.tier === 2 && resolveExceptionCategories({ cwd }).has(hit.category)) {
+        appendAudit(
+          { session_id: sessionId, tier: hit.tier, category: hit.category, mode, action: 'excepted' },
+          new Date().toISOString(),
+        );
+        return { stdout: JSON.stringify(contextOutput(buildExceptionContext(hit))) };
+      }
       const action = decideAction(hit, mode);
       appendAudit(
         { session_id: sessionId, tier: hit.tier, category: hit.category, mode, action },

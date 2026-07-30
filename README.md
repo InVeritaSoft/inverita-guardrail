@@ -102,6 +102,37 @@ If the hook cannot read its input payload, it **fails open with a warning**
 prompt — a deliberate choice so a future input-schema change can't wedge every
 developer's Claude Code.
 
+### Exceptions (reasoned, Layer-2-only allowlist)
+
+Layer 2 is a deliberately broad net and **will** false-positive on legitimate
+work — e.g. a pharmacy app that legitimately discusses medication doses, or a
+billing tool that legitimately handles ICD codes. Rather than reword every
+prompt or drop to `advisory` project-wide, except just that category:
+
+```bash
+inverita-guard exceptions add medication_dosage --reason "pharmacy app: doses are the point"
+inverita-guard exceptions list
+inverita-guard exceptions remove medication_dosage
+```
+
+This writes `{ "exceptions": [{ "category": "...", "reason": "..." }] }` into
+`.inverita-guard.json` in the current directory (preserving `mode` and any
+other keys already there). A `--reason` is required — exceptions stay
+auditable, not silent.
+
+**Exceptions can never reach Layer 1.** The CLI refuses outright to add a
+Layer-1 category (`ssn_pattern`, `mrn_pattern`, `dob_name_proximity`,
+`email_clinical`, `insurance_policy`) — identifiers are a hard safety floor,
+full stop. This isn't just a write-time check: the guard's read path
+independently filters `exceptions` entries against the Layer-2 category list,
+so even a hand-edited or malicious config naming a Layer-1 category is
+silently dropped and has no effect. A prompt matching an excepted category is
+allowed through with an `EXCEPTED` context note (not silent — the model is
+still told it happened) and audited with `action: "excepted"`.
+
+You can also add/remove exceptions conversationally — see
+[Self-heal skill](#self-heal-skill), which uses the same CLI under the hood.
+
 ### Audit log
 
 Every block appends one JSON line to `logs/audit.jsonl`:
@@ -143,7 +174,10 @@ every prompt.
 | Command | Purpose |
 |---------|---------|
 | `inverita-guard` | Guard mode: reads the hook JSON on stdin, prints the block/allow decision (exit 0). What the managed hook calls. |
-| `inverita-guard check "<prompt>"` | Test the detector against a prompt. Exit 1 if it would **block** (0 for warn/clean). `--json` for machine output; `--mode enforce\|advisory` to force the mode (otherwise resolved from env + `.inverita-guard.json`). |
+| `inverita-guard check "<prompt>"` | Test the detector against a prompt. Exit 1 if it would **block** (0 for warn/clean/excepted). `--json` for machine output; `--mode enforce\|advisory` to force the mode (otherwise resolved from env + `.inverita-guard.json`). |
+| `inverita-guard exceptions list` | Show this project's effective exceptions (walks up like mode resolution). `--json` for machine output. |
+| `inverita-guard exceptions add <category> --reason "..."` | Except a Layer-2 category for this project (writes `.inverita-guard.json` in the cwd). Refuses Layer-1 categories and requires a reason. |
+| `inverita-guard exceptions remove <category>` | Remove a project exception (no-op if absent). |
 | `inverita-guard doctor` | Verify Node ≥18, `inverita-guard` on PATH, the hook is wired, a detector smoke test, and an **end-to-end dispatch** check that actually runs the wired CLI on a synthetic-PHI probe and confirms it blocks. Exit 0 iff healthy. `--json` for aggregation. |
 | `inverita-guard serve [--host H] [--port N]` | Run the HTTP-hook endpoint (POST prompt → decision JSON, `GET /healthz`). |
 | `inverita-guard install [--managed] [--print]` | Wire the hook into `~/.claude/settings.json`; `--managed` emits the org managed-settings artifact; `--print` previews. |
@@ -472,11 +506,12 @@ inverita-guardrail/
     serve.mjs                          #   createServer()/startServer() — HTTP-hook endpoint
     install.mjs                        #   settings/managed-settings builders + writers
     stdin.mjs                          #   readStream()    — fail-open stream reader (shared)
-    config.mjs                         #   resolveMode()   — enforce/advisory mode resolution
+    config.mjs                         #   resolveMode(), exceptions read/write (Layer-2-only)
+    categories.mjs                     #   LAYER1_CATEGORIES/LAYER2_CATEGORIES — exception validation
   skills/
     guard-selfheal/SKILL.md            # safe diagnose + repair skill (never breaks Claude usage)
   examples/
-    .inverita-guard.json               # per-project mode marker template
+    .inverita-guard.json               # per-project mode + exceptions marker template
   test/                                # node:test suites (zero-dependency, 100% coverage)
   managed-settings/
     managed-settings.example.json      # org enforcement template

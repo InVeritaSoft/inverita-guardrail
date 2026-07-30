@@ -43,9 +43,9 @@ const MAX_LOG_BYTES = 5 * 1024 * 1024; // must match the hook's cap
 // Run the hook as a child process with the given stdin, isolated to `root`
 // (so audit writes never touch the real logs/ dir). `raw` overrides the
 // JSON payload to exercise malformed input.
-function runHook(prompt, { root, raw, sessionId = 'test-sess', mode = 'enforce' } = {}) {
+function runHook(prompt, { root, raw, sessionId = 'test-sess', mode = 'enforce', cwd = '.' } = {}) {
   const input =
-    raw !== undefined ? raw : JSON.stringify({ prompt, session_id: sessionId, cwd: '.' });
+    raw !== undefined ? raw : JSON.stringify({ prompt, session_id: sessionId, cwd });
   const env = { ...process.env };
   if (root) env.CLAUDE_PLUGIN_ROOT = root;
   // Default to enforce so Layer 2 blocking is exercised (mirrors an org that
@@ -287,6 +287,57 @@ test('advisory Layer 2 audits action=warn (not a block)', () => {
   assert.equal(rec.tier, 2);
   assert.equal(rec.mode, 'advisory');
   assert.equal(rec.action, 'warn');
+});
+
+/* ------------------------------------------------------------------ *
+ * 5c. Project exceptions — Layer-2-only, never Layer 1
+ * ------------------------------------------------------------------ */
+
+function writeExceptionConfig(dir, exceptions) {
+  fs.writeFileSync(path.join(dir, '.inverita-guard.json'), JSON.stringify({ exceptions }));
+}
+
+test('a project exception allows a Layer 2 category through without blocking or warning', () => {
+  const root = tmpRoot();
+  const projectDir = tmpRoot();
+  writeExceptionConfig(projectDir, [{ category: 'medication_dosage', reason: 'pharmacy app: doses are the point' }]);
+  const { status, json } = runHook('prescribe 10mg twice daily', { root, mode: 'enforce', cwd: projectDir });
+  assert.equal(status, 0);
+  assert.equal(json.decision, undefined, 'an excepted Layer 2 category must not block');
+  assert.match(json.hookSpecificOutput.additionalContext, /Exception applied/);
+  assert.match(json.hookSpecificOutput.additionalContext, /category: medication_dosage/);
+});
+
+test('exceptions are audited with action=excepted', () => {
+  const root = tmpRoot();
+  const projectDir = tmpRoot();
+  writeExceptionConfig(projectDir, [{ category: 'medication_dosage', reason: 'pharmacy app' }]);
+  runHook('prescribe 10mg twice daily', { root, mode: 'enforce', cwd: projectDir });
+  const [rec] = readAudit(root);
+  assert.equal(rec.tier, 2);
+  assert.equal(rec.category, 'medication_dosage');
+  assert.equal(rec.action, 'excepted');
+});
+
+test('a hand-edited exception naming a Layer-1 category is ignored — identifiers are never exceptable', () => {
+  const root = tmpRoot();
+  const projectDir = tmpRoot();
+  // Simulate a maliciously or mistakenly hand-edited config trying to except
+  // an identifier check directly (not via the CLI, which would refuse this).
+  writeExceptionConfig(projectDir, [{ category: 'ssn_pattern', reason: 'trust me' }]);
+  const { status, json } = runHook('patient SSN is 123-45-6789', { root, mode: 'enforce', cwd: projectDir });
+  assert.equal(status, 0);
+  assert.equal(json.decision, 'block', 'Layer 1 must still block regardless of config content');
+  assert.match(json.reason, /category: ssn_pattern/);
+});
+
+test('an exception for a different category does not suppress an unrelated Layer 2 hit', () => {
+  const root = tmpRoot();
+  const projectDir = tmpRoot();
+  writeExceptionConfig(projectDir, [{ category: 'lab_value', reason: 'not this one' }]);
+  const { json } = runHook('prescribe 10mg twice daily', { root, mode: 'enforce', cwd: projectDir });
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /category: medication_dosage/);
 });
 
 /* ------------------------------------------------------------------ *

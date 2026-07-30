@@ -2,5 +2,7 @@
   "_comment": "Drop this file at a repo root (or any parent dir) to set the guard's enforcement mode for that project tree. The nearest such file walking up from the prompt's cwd wins, unless the INVERITA_GUARD_MODE env var is set (which always overrides). Layer 1 identifiers (SSN/MRN/DOB/etc.) block in every mode; only the broad Layer 2 clinical net is affected.",
   "_comment_mode": "\"enforce\" = block Layer 1 AND Layer 2. \"advisory\" = block Layer 1, only warn (allow through) on Layer 2. Default when no file/env is present is \"advisory\".",
   "mode": "enforce",
-  "_comment_shorthand": "Alternatively, omit \"mode\" and set \"healthcare\": true — that marker is treated as \"enforce\"."
+  "_comment_shorthand": "Alternatively, omit \"mode\" and set \"healthcare\": true — that marker is treated as \"enforce\".",
+  "_comment_exceptions": "Optional, Layer-2-only allowlist for recurring false positives in THIS project (e.g. a pharmacy app that legitimately discusses doses). Manage with `inverita-guard exceptions add|list|remove` rather than hand-editing this array — the CLI validates the category and requires a reason. Layer 1 identifiers (ssn_pattern/mrn_pattern/dob_name_proximity/email_clinical/insurance_policy) can NEVER be excepted: the guard's read path drops any Layer-1 category found here even if hand-edited in.",
+  "exceptions": []
 }
