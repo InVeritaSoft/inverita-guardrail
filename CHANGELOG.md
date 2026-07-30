@@ -5,6 +5,20 @@ All notable changes to **inverita-guardrail** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] — 2026-07-30
+
+### Added
+- **`inverita-guard update [--tag vX.Y.Z]`** — reinstalls globally via
+  `npm i -g github:InVeritaSoft/inverita-guardrail` (or a pinned tag), then
+  automatically re-runs `doctor` to verify the install, including the
+  end-to-end dispatch check. Exit 0 only if both the install and the
+  post-update health check succeed.
+
+### Tests
+- 141 tests, 100% line / branch / function coverage, including a real
+  subprocess test that exercises the genuine `spawnSync` wiring against a
+  stubbed `npm` on PATH (never touches the real registry).
+
 ## [0.1.9] — 2026-07-30
 
 ### Added
@@ -109,6 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `inverita-guard` CLI, with a plugin marketplace and managed-settings
   enforcement path.
 
+[0.1.10]: https://github.com/InVeritaSoft/inverita-guardrail/releases/tag/v0.1.10
 [0.1.9]: https://github.com/InVeritaSoft/inverita-guardrail/releases/tag/v0.1.9
 [0.1.8]: https://github.com/InVeritaSoft/inverita-guardrail/releases/tag/v0.1.8
 [0.1.7]: https://github.com/InVeritaSoft/inverita-guardrail/releases/tag/v0.1.7

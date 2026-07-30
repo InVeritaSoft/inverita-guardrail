@@ -183,6 +183,85 @@ test('exceptions: unknown subcommand exits 2 and prints help', async () => {
   assert.match(out.stdout, /Usage:/);
 });
 
+test('update: npm succeeds, runs doctor verification, reports PROBLEM when unwired', async () => {
+  let calledCmd, calledArgs;
+  const { io, out } = harness({
+    spawnSync: (cmd, args) => {
+      calledCmd = cmd;
+      calledArgs = args;
+      return { status: 0, stdout: 'added 1 package\n', stderr: '', error: null };
+    },
+  });
+  const { code } = await run(['update'], io);
+  assert.equal(calledCmd, 'npm');
+  assert.deepEqual(calledArgs, ['i', '-g', 'github:InVeritaSoft/inverita-guardrail']);
+  assert.match(out.stdout, /added 1 package/);
+  assert.match(out.stdout, /Verifying with doctor/);
+  // harness()'s empty PATH/homedir mean doctor won't be fully healthy — the
+  // update step itself still succeeded, but the exit code reflects doctor.
+  assert.equal(code, 1);
+  assert.match(out.stdout, /PROBLEM: see FAIL lines above/);
+});
+
+test('update --tag pins a specific ref', async () => {
+  let calledArgs;
+  const { io } = harness({
+    spawnSync: (_cmd, args) => {
+      calledArgs = args;
+      return { status: 0, stdout: '', stderr: '', error: null };
+    },
+  });
+  await run(['update', '--tag', 'v0.1.9'], io);
+  assert.deepEqual(calledArgs, ['i', '-g', 'github:InVeritaSoft/inverita-guardrail#v0.1.9']);
+});
+
+test('update: npm exits nonzero — reports failure and does not run doctor', async () => {
+  const { io, out } = harness({
+    spawnSync: () => ({ status: 1, stdout: '', stderr: 'npm ERR! network timeout\n', error: null }),
+  });
+  const { code } = await run(['update'], io);
+  assert.equal(code, 1);
+  assert.match(out.stderr, /npm ERR! network timeout/);
+  assert.match(out.stderr, /update failed: npm exited with code 1/);
+  assert.doesNotMatch(out.stdout, /Verifying with doctor/);
+});
+
+test('update: npm cannot be spawned at all — reports failure and does not run doctor', async () => {
+  const { io, out } = harness({
+    spawnSync: () => ({ status: null, stdout: '', stderr: '', error: new Error('ENOENT') }),
+  });
+  const { code } = await run(['update'], io);
+  assert.equal(code, 1);
+  assert.match(out.stderr, /update failed: could not run npm \(ENOENT\)/);
+  assert.doesNotMatch(out.stdout, /Verifying with doctor/);
+});
+
+test('update: fully healthy after update reports OK and exits 0', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'run-home-'));
+  const claude = path.join(home, '.claude');
+  fs.mkdirSync(claude, { recursive: true });
+  fs.writeFileSync(
+    path.join(claude, 'settings.json'),
+    JSON.stringify({
+      hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'inverita-guard' }] }] },
+    }),
+  );
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-bin-'));
+  fs.writeFileSync(
+    path.join(binDir, 'inverita-guard'),
+    '#!/bin/sh\ncat >/dev/null\nprintf \'{"decision":"block","reason":"stub"}\'\n',
+    { mode: 0o755 },
+  );
+  const { io, out } = harness({
+    homedir: home,
+    env: { PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+    spawnSync: () => ({ status: 0, stdout: '', stderr: '', error: null }),
+  });
+  const { code } = await run(['update'], io);
+  assert.equal(code, 0);
+  assert.match(out.stdout, /OK: guard is healthy \(updated\)/);
+});
+
 test('serve returns a server handle and writes the banner', async () => {
   let opts;
   const fakeServer = { fake: true };

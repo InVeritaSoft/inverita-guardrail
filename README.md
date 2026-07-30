@@ -169,6 +169,19 @@ npm creates the per-OS PATH shim (`inverita-guard` on Unix,
 `inverita-guard.cmd` on Windows). The guard then runs offline and instantly on
 every prompt.
 
+### Updating
+
+```bash
+inverita-guard update              # latest main
+inverita-guard update --tag v0.1.9 # pin a specific release
+```
+
+Re-runs the same global npm install, then automatically re-verifies with
+`doctor` (Node ≥18, on PATH, hook wired, detector smoke test, end-to-end
+dispatch) — so an update that silently regresses (as the symlink dispatch bug
+in [CHANGELOG.md](CHANGELOG.md) once did) is caught immediately rather than
+discovered on the next prompt.
+
 ### Commands
 
 | Command | Purpose |
@@ -179,6 +192,7 @@ every prompt.
 | `inverita-guard exceptions add <category> --reason "..."` | Except a Layer-2 category for this project (writes `.inverita-guard.json` in the cwd). Refuses Layer-1 categories and requires a reason. |
 | `inverita-guard exceptions remove <category>` | Remove a project exception (no-op if absent). |
 | `inverita-guard doctor` | Verify Node ≥18, `inverita-guard` on PATH, the hook is wired, a detector smoke test, and an **end-to-end dispatch** check that actually runs the wired CLI on a synthetic-PHI probe and confirms it blocks. Exit 0 iff healthy. `--json` for aggregation. |
+| `inverita-guard update [--tag vX.Y.Z]` | Reinstall globally (`npm i -g github:InVeritaSoft/inverita-guardrail`, or a pinned tag), then re-run `doctor` automatically. Exit 0 only if the update succeeded **and** doctor reports healthy afterward. |
 | `inverita-guard serve [--host H] [--port N]` | Run the HTTP-hook endpoint (POST prompt → decision JSON, `GET /healthz`). |
 | `inverita-guard install [--managed] [--print]` | Wire the hook into `~/.claude/settings.json`; `--managed` emits the org managed-settings artifact; `--print` previews. |
 
@@ -499,7 +513,7 @@ inverita-guardrail/
     hooks.json                         # registers the UserPromptSubmit hook
     pre-prompt-guard.mjs               # detector + decision + audit log + hook entry point
   cli/
-    inverita-guard.mjs                 # `inverita-guard` CLI (guard/check/doctor/serve/install)
+    inverita-guard.mjs                 # `inverita-guard` CLI (guard/check/doctor/update/serve/install/exceptions)
   src/                                 # CLI command implementations (importable, unit-tested)
     check.mjs                          #   runCheck()      — detector verdict for a prompt
     doctor.mjs                         #   runDoctor()     — install/wiring health checks

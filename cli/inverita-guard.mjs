@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -21,12 +22,17 @@ import { readStream } from '../src/stdin.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
+// The package spec `update` reinstalls. Same target the README tells a
+// developer to run by hand for a fresh install.
+const UPDATE_PACKAGE_SPEC = 'github:InVeritaSoft/inverita-guardrail';
+
 const HELP =
   `inverita-guard ${pkg.version}\n\n` +
   `Usage:\n` +
   `  inverita-guard                 Guard mode: read hook JSON on stdin, print decision (exit 0)\n` +
   `  inverita-guard check <prompt>  Test the detector against a prompt\n` +
   `  inverita-guard doctor          Verify install + hook wiring (exit 0 if healthy)\n` +
+  `  inverita-guard update [--tag vX.Y.Z]  Reinstall globally via npm, then re-verify with doctor\n` +
   `  inverita-guard serve           Run the HTTP-hook endpoint\n` +
   `  inverita-guard install         Wire the hook into ~/.claude/settings.json\n` +
   `  inverita-guard exceptions list                          Show this project's active exceptions\n` +
@@ -59,6 +65,7 @@ function defaultIo() {
     platform: process.platform,
     nodeVersion: process.version,
     startServer,
+    spawnSync: (cmd, args, opts) => spawnSync(cmd, args, opts),
   };
 }
 
@@ -166,6 +173,41 @@ export async function run(argv, io = defaultIo()) {
     io.writeErr(`unknown exceptions subcommand: ${sub}\n`);
     io.write(HELP);
     return { code: 2 };
+  }
+
+  if (cmd === 'update') {
+    const rest = argv.slice(1);
+    const tagIdx = rest.indexOf('--tag');
+    const tag = tagIdx >= 0 ? rest[tagIdx + 1] : undefined;
+    const spec = tag ? `${UPDATE_PACKAGE_SPEC}#${tag}` : UPDATE_PACKAGE_SPEC;
+
+    io.write(`Updating inverita-guard (npm i -g ${spec})...\n`);
+    const result = io.spawnSync('npm', ['i', '-g', spec], { encoding: 'utf8' });
+
+    if (result.error) {
+      io.writeErr(`update failed: could not run npm (${result.error.message})\n`);
+      return { code: 1 };
+    }
+    if (result.stdout) io.write(result.stdout);
+    if (result.stderr) io.writeErr(result.stderr);
+    if (result.status !== 0) {
+      io.writeErr(`update failed: npm exited with code ${result.status}\n`);
+      return { code: 1 };
+    }
+
+    io.write('\nUpdate complete. Verifying with doctor...\n\n');
+    const doctorResult = runDoctor({
+      env: io.env,
+      homedir: io.homedir,
+      cwd: io.cwd,
+      platform: io.platform,
+      nodeVersion: io.nodeVersion,
+    });
+    for (const c of doctorResult.checks) {
+      io.write(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name}  (${c.detail})\n`);
+    }
+    io.write(`\n${doctorResult.ok ? 'OK: guard is healthy (updated)' : 'PROBLEM: see FAIL lines above'}\n`);
+    return { code: doctorResult.ok ? 0 : 1 };
   }
 
   if (cmd === 'doctor') {

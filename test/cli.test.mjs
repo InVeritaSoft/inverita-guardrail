@@ -171,6 +171,28 @@ test('doctor (text mode) reports OK and exits 0 when fully wired', () => {
   assert.match(res.stdout, /OK: guard is healthy/);
 });
 
+test('update: exercises the real spawnSync path via a stubbed npm on PATH (no network)', () => {
+  // Not the in-process io.spawnSync mock used elsewhere — this is a real
+  // subprocess spawn of a fake `npm` placed first on PATH, so the genuine
+  // defaultIo().spawnSync wiring in cli/inverita-guard.mjs gets exercised
+  // without ever touching the real npm registry or GitHub.
+  const binDir = tmpHome();
+  fs.writeFileSync(
+    path.join(binDir, 'npm'),
+    '#!/bin/sh\necho "added 1 package in 1s"\nexit 0\n',
+    { mode: 0o755 },
+  );
+  const res = run(['update'], undefined, {
+    env: { ...process.env, HOME: tmpHome(), PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+  });
+  assert.match(res.stdout, /added 1 package in 1s/);
+  assert.match(res.stdout, /Verifying with doctor/);
+  // The stub HOME has no wired hook, so doctor reports a problem — the point
+  // of this test is exercising the spawnSync wiring, not asserting full health.
+  assert.equal(res.status, 1);
+  assert.match(res.stdout, /PROBLEM: see FAIL lines above/);
+});
+
 test('install (write mode) wires the hook, then is idempotent', () => {
   const home = tmpHome();
   const env = { ...process.env, HOME: home };
