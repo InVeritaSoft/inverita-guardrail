@@ -32,6 +32,7 @@ import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readStream } from '../src/stdin.mjs';
 import { resolveMode, resolveExceptionCategories } from '../src/config.mjs';
+import { resolveEnvironment, isRelaxed, isStrict, UNKNOWN } from '../src/environment.mjs';
 
 /* ------------------------------------------------------------------ *
  * Configuration
@@ -58,12 +59,42 @@ const FAILOPEN_CONTEXT =
  * the model is told what tripped the broad clinical net so it can steer the
  * developer toward synthetic data without blocking legitimate work.
  */
-function buildWarnContext(hit) {
+function buildWarnContext(hit, env) {
+  if (isRelaxed(env.environment)) {
+    return (
+      `[${PLUGIN_NAME}] Advisory (environment: ${env.environment}${describeSource(env)}) — clinical ` +
+      `specificity detected (category: ${hit.category}), not blocked. ${hit.body}\n` +
+      'This prompt looks like local development work, so Layer 2 is a caution rather than a ' +
+      'block. Real PHI must still never be entered — Layer-1 identifiers (SSN/MRN/DOB) are ' +
+      'blocked in every environment.'
+    );
+  }
   return (
     `[${PLUGIN_NAME}] Advisory (mode: advisory) — clinical specificity detected ` +
     `(category: ${hit.category}), not blocked. ${hit.body}\n` +
     'Use synthetic or fully anonymized data; this project is not in enforce mode, so ' +
     'this is a caution rather than a block.'
+  );
+}
+
+/** Human-readable provenance for an environment decision, for audit clarity. */
+function describeSource(env) {
+  if (env.source === 'default') return '';
+  if (env.marker) return `, from ${env.source}: "${env.marker}"`;
+  return `, from ${env.source}`;
+}
+
+/**
+ * Appended to a Layer-2 block that happened because of the environment rather
+ * than the project's mode. Without this the developer sees a block their
+ * `.inverita-guard.json` says should have been a warning.
+ */
+function buildEscalationNote(env) {
+  return (
+    `\n\nEscalated: this prompt reads as a ${env.environment} environment` +
+    `${describeSource(env)}, where real PHI is most likely to exist. Layer 2 blocks there ` +
+    'regardless of this project\'s advisory mode. If this prompt is really about local or ' +
+    'synthetic data, say so explicitly and resubmit.'
   );
 }
 
@@ -334,9 +365,17 @@ function buildReason(tier, category, body) {
  *  - 'block' → Layer 1 always, or Layer 2 under enforce mode
  *  - 'warn'  → Layer 2 under advisory mode (allowed through with a caution)
  */
-export function decideAction(hit, mode) {
+export function decideAction(hit, mode, environment = UNKNOWN) {
   if (!hit) return null;
+  // Layer 1 is a hard floor: no environment, config, or prompt wording can
+  // soften a real identifier. This ordering is the safety guarantee.
   if (hit.tier === 1) return 'block';
+  // A shared system is where real PHI actually lives — tighten past the
+  // project's own mode.
+  if (isStrict(environment)) return 'block';
+  // A developer's own machine talking about fixtures and seed data is the
+  // dominant false-positive source — loosen past the project's own mode.
+  if (isRelaxed(environment)) return 'warn';
   return mode === 'enforce' ? 'block' : 'warn';
 }
 
@@ -404,6 +443,8 @@ export function appendAudit(entry, isoTimestamp) {
       tier: entry.tier,
       category: entry.category,
       mode: entry.mode,
+      environment: entry.environment,
+      env_source: entry.env_source,
       action: entry.action,
     };
     fs.appendFileSync(logFile, `${JSON.stringify(record)}\n`);
@@ -439,27 +480,34 @@ export function processHookInput(raw) {
       typeof payload.session_id === 'string' && payload.session_id ? payload.session_id : 'unknown';
     const cwd = typeof payload.cwd === 'string' ? payload.cwd : undefined;
     const mode = resolveMode({ cwd, env: process.env });
+    const env = resolveEnvironment({ cwd, env: process.env, prompt });
     const hit = detect(prompt);
     if (hit) {
+      const auditBase = {
+        session_id: sessionId,
+        tier: hit.tier,
+        category: hit.category,
+        mode,
+        environment: env.environment,
+        env_source: env.source,
+      };
       // Exceptions only ever apply to Layer 2 — a Layer 1 hit reaches
       // decideAction() unconditionally, so identifiers can never be excepted.
       if (hit.tier === 2 && resolveExceptionCategories({ cwd }).has(hit.category)) {
-        appendAudit(
-          { session_id: sessionId, tier: hit.tier, category: hit.category, mode, action: 'excepted' },
-          new Date().toISOString(),
-        );
+        appendAudit({ ...auditBase, action: 'excepted' }, new Date().toISOString());
         return { stdout: JSON.stringify(contextOutput(buildExceptionContext(hit))) };
       }
-      const action = decideAction(hit, mode);
-      appendAudit(
-        { session_id: sessionId, tier: hit.tier, category: hit.category, mode, action },
-        new Date().toISOString(),
-      );
+      const action = decideAction(hit, mode, env.environment);
+      appendAudit({ ...auditBase, action }, new Date().toISOString());
       if (action === 'block') {
-        return { stdout: JSON.stringify({ decision: 'block', reason: hit.reason }) };
+        // Explain an environment-driven block; a mode-driven one already reads
+        // correctly on its own.
+        const escalated = hit.tier === 2 && isStrict(env.environment) && mode !== 'enforce';
+        const reason = escalated ? hit.reason + buildEscalationNote(env) : hit.reason;
+        return { stdout: JSON.stringify({ decision: 'block', reason }) };
       }
-      // advisory Layer 2: allow the prompt, inject a caution instead of blocking
-      return { stdout: JSON.stringify(contextOutput(buildWarnContext(hit))) };
+      // Layer 2 allowed through: inject a caution instead of blocking.
+      return { stdout: JSON.stringify(contextOutput(buildWarnContext(hit, env))) };
     }
     return { stdout: JSON.stringify(contextOutput(CLEAN_CONTEXT)) };
   } catch {

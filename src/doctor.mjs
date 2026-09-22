@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { detect } from '../hooks/pre-prompt-guard.mjs';
+import { resolveEnvironment } from './environment.mjs';
 
 // A synthetic identifier (never a real SSN) used to prove the wired CLI actually
 // dispatches and blocks end-to-end — not just that a command string is present.
@@ -96,6 +97,20 @@ export function runDoctor({
     name: 'managed hook wired',
     ok: !!wired,
     detail: wired || 'no UserPromptSubmit hook referencing inverita-guard found',
+  });
+
+  // Informational, never a failure: 'unknown' is a perfectly healthy state
+  // (it means the guard behaves exactly as it did before environment
+  // awareness). Surfaced so a developer can see WHY their prompts are being
+  // treated strictly or leniently in this directory.
+  const resolved = resolveEnvironment({ cwd, env, prompt: '' });
+  checks.push({
+    name: 'environment (informational)',
+    ok: true,
+    detail:
+      resolved.source === 'default'
+        ? 'unknown here — resolved per prompt; mode alone decides Layer 2'
+        : `${resolved.environment} (from ${resolved.source}${resolved.marker ? `: "${resolved.marker}"` : ''})`,
   });
 
   const blocks = !!detectFn('patient SSN is 123-45-6789');

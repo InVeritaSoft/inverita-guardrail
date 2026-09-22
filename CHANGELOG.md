@@ -5,6 +5,48 @@ All notable changes to **inverita-guardrail** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] — 2026-09-22
+
+### Added
+- **Environment awareness** (`src/environment.mjs`) — the guard now identifies
+  whether a prompt concerns a developer's local machine or a shared
+  dev/stage/prod system, and scales **Layer 2** accordingly: `local` warns even
+  under `enforce`, `stage`/`prod` block even under `advisory`, `dev` and
+  "no signal" behave exactly as before. **Layer 1 identifiers still block in
+  every environment** — no environment, config, or prompt wording can soften
+  them.
+- **Automatic, zero-config detection** from the prompt text, with
+  **stack-neutral** marker tables: .NET, Node, Python, JVM, Go, Ruby, PHP,
+  Rust, and container/cloud tooling each have their own table plus a shared
+  generic set. Adding an ecosystem is a table entry, not a regex rewrite.
+  Escalating markers are checked first, so a prompt naming both prod and
+  localhost resolves to prod.
+- **Repo heuristics** limited to dev-only artifacts (`.env.local`,
+  `appsettings.Development.json`, `launchSettings.json`, `docker-compose.yml`)
+  and structurally unable to conclude anything but `local`.
+- **`INVERITA_GUARD_ENV`** env var and an `"environment"` key in
+  `.inverita-guard.json`, both outranking automatic detection.
+- **`inverita-guard check --env <local|dev|stage|prod>`** to force an
+  environment, and an informational environment line in `doctor`.
+
+### Changed
+- Audit records gain **`environment`** and **`env_source`** fields, so an
+  environment-driven block can be explained to a compliance reviewer.
+- `check` verdict lines now report the resolved environment and its source.
+- `src/config.mjs` grew a shared `findProjectConfig()` walk-up; `readProjectMode`
+  and `readProjectExceptions` now build on it rather than duplicating the loop.
+
+### Tests
+- 190 tests (up from 141), including the full 3×2 environment/mode action
+  matrix, prod-beats-local precedence, the "merely being a checkout is not
+  evidence" rule, and per-stack marker coverage for every supported ecosystem.
+
+### Known trade-off
+- Relaxation from prompt text is a deliberate, bounded bypass: writing
+  "localhost" downgrades Layer 2. Layer 1 is unaffected. Pin
+  `{ "environment": "prod" }` in `.inverita-guard.json` to close it — config
+  outranks prompt text.
+
 ## [0.1.10] — 2026-07-30
 
 ### Added

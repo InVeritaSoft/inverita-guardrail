@@ -102,6 +102,63 @@ If the hook cannot read its input payload, it **fails open with a warning**
 prompt — a deliberate choice so a future input-schema change can't wedge every
 developer's Claude Code.
 
+### Environment awareness (local dev vs dev/stage/prod)
+
+Mode is how strict *this project* wants to be. **Environment is what *this
+prompt* is about** — and it is detected automatically, with no configuration.
+A prompt about seeding a fixture on your laptop carries far less real-PHI risk
+than one about querying the prod patient database, so the guard scales Layer 2
+to match:
+
+| Environment | Layer 1 | Layer 2 |
+|---|---|---|
+| `local` | **block** | **warn** — even under `enforce` |
+| `dev`, or no signal | **block** | mode decides (unchanged behavior) |
+| `stage`, `prod` | **block** | **block** — even under `advisory` |
+
+**Layer 1 never yields.** No environment, config value, or prompt wording can
+soften an SSN/MRN/DOB hit. Environment only ever moves Layer 2.
+
+**Resolution (highest priority first):**
+
+1. **`INVERITA_GUARD_ENV`** env var (`local` | `dev` | `stage` | `prod`) — an org
+   can pin `prod` fleet-wide via managed settings.
+2. The nearest **`.inverita-guard.json`** with `{ "environment": "prod" }`,
+   walking up from the project — same resolution as `mode`.
+3. **The prompt text**, automatically. Markers are stack-neutral: `.NET`,
+   Node, Python, JVM, Go, Ruby, PHP, Rust, and container/cloud tooling each
+   have their own table in `src/environment.mjs`, plus a shared generic set.
+   Escalating markers are checked first, so a prompt naming both prod and
+   localhost resolves to **prod**.
+4. **Dev-only repo artifacts** in the cwd (`.env.local`,
+   `appsettings.Development.json`, `launchSettings.json`, `docker-compose.yml`).
+   These may only ever conclude `local` — a file on disk never starts blocking
+   prompts on its own. Merely *being* a checkout (a `package.json`, a `.sln`) is
+   deliberately not evidence; relaxing on that would make nearly every repo
+   permanently `local` and quietly gut `enforce`.
+
+```bash
+# Automatic, from the prompt alone:
+inverita-guard check --mode advisory "seed a fixture with 10mg doses on localhost"
+#   WARN  tier=2 ... (mode: advisory, env: local via prompt "localhost", allowed)
+
+inverita-guard check --mode advisory "pull 10mg dose rows from the prod database"
+#   BLOCK tier=2 ... (mode: advisory, env: prod via prompt "prod <resource>")
+
+# Force one, to see how a prompt would resolve elsewhere:
+inverita-guard check --env prod "prescribe 10mg twice daily"
+```
+
+Both the environment and **where it came from** are written to the audit log
+(`environment`, `env_source`) and shown by `doctor`, so an
+environment-driven decision can always be explained to a reviewer.
+
+> **Known trade-off.** Because prompt text can relax, writing "localhost"
+> downgrades Layer 2. This is accepted and bounded: Layer 2 already defaults to
+> advisory, and Layer 1 — the tier that keeps a real identifier out — is
+> untouchable. If you need that closed, pin `.inverita-guard.json` to
+> `{ "environment": "prod" }`, which outranks prompt text.
+
 ### Exceptions (reasoned, Layer-2-only allowlist)
 
 Layer 2 is a deliberately broad net and **will** false-positive on legitimate

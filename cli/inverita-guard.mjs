@@ -15,6 +15,7 @@ import {
   addProjectException,
   removeProjectException,
 } from '../src/config.mjs';
+import { resolveEnvironment, normalizeEnvironment, ENVIRONMENTS } from '../src/environment.mjs';
 import { runDoctor } from '../src/doctor.mjs';
 import { startServer } from '../src/serve.mjs';
 import { buildManagedSettings, installToUserSettings, mergeHookIntoSettings } from '../src/install.mjs';
@@ -31,6 +32,7 @@ const HELP =
   `Usage:\n` +
   `  inverita-guard                 Guard mode: read hook JSON on stdin, print decision (exit 0)\n` +
   `  inverita-guard check <prompt>  Test the detector against a prompt\n` +
+  `                                 [--mode enforce|advisory] [--env ${ENVIRONMENTS.join('|')}] [--json]\n` +
   `  inverita-guard doctor          Verify install + hook wiring (exit 0 if healthy)\n` +
   `  inverita-guard update [--tag vX.Y.Z]  Reinstall globally via npm, then re-verify with doctor\n` +
   `  inverita-guard serve           Run the HTTP-hook endpoint\n` +
@@ -109,24 +111,36 @@ export async function run(argv, io = defaultIo()) {
       modeIdx >= 0 && MODES.includes(rest[modeIdx + 1])
         ? rest[modeIdx + 1]
         : resolveMode({ cwd: io.cwd, env: io.env });
-    const flags = new Set(['--json', '--mode', mode]);
-    const promptArg = rest.filter((a, i) => !flags.has(a) && rest[i - 1] !== '--mode')[0];
+    const envIdx = rest.indexOf('--env');
+    const envOverride = envIdx >= 0 ? normalizeEnvironment(rest[envIdx + 1]) : null;
+    // Guard the index: with no --env present, envIdx is -1 and rest[envIdx + 1]
+    // would be the prompt itself, silently swallowing it.
+    const flags = new Set(['--json', '--mode', mode, ...(envIdx >= 0 ? ['--env', rest[envIdx + 1]] : [])]);
+    const promptArg = rest.filter(
+      (a, i) => !flags.has(a) && rest[i - 1] !== '--mode' && rest[i - 1] !== '--env',
+    )[0];
     let prompt = promptArg;
     // Only fall back to stdin when a prompt wasn't supplied AND input is piped;
     // on a bare terminal there is nothing to read and we'd hang.
     if (prompt === undefined && !io.isTTY) prompt = await io.readStdin();
     const exceptions = resolveExceptionCategories({ cwd: io.cwd });
-    const verdict = runCheck(prompt || '', mode, exceptions);
+    // --env forces the environment; otherwise resolve it the way the hook does,
+    // so `check` reports the verdict the developer would actually get.
+    const env = envOverride
+      ? { environment: envOverride, source: 'flag' }
+      : resolveEnvironment({ cwd: io.cwd, env: io.env, prompt: prompt || '' });
+    const verdict = runCheck(prompt || '', mode, exceptions, env.environment);
+    const envLabel = `env: ${env.environment}${env.marker ? ` via ${env.source} "${env.marker}"` : ''}`;
     if (json) {
       io.write(`${JSON.stringify(verdict)}\n`);
     } else if (verdict.action === 'block') {
-      io.write(`BLOCK    tier=${verdict.tier}  category=${verdict.category}  (mode: ${mode})\n`);
+      io.write(`BLOCK    tier=${verdict.tier}  category=${verdict.category}  (mode: ${mode}, ${envLabel})\n`);
     } else if (verdict.action === 'warn') {
-      io.write(`WARN     tier=${verdict.tier}  category=${verdict.category}  (mode: ${mode}, allowed)\n`);
+      io.write(`WARN     tier=${verdict.tier}  category=${verdict.category}  (mode: ${mode}, ${envLabel}, allowed)\n`);
     } else if (verdict.action === 'excepted') {
       io.write(`EXCEPTED tier=${verdict.tier}  category=${verdict.category}  (project exception, allowed)\n`);
     } else {
-      io.write(`CLEAN    (mode: ${mode})\n`);
+      io.write(`CLEAN    (mode: ${mode}, ${envLabel})\n`);
     }
     return { code: verdict.action === 'block' ? 1 : 0 };
   }

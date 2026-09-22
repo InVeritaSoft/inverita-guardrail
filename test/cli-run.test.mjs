@@ -86,7 +86,44 @@ test('check (text mode) prints a WARN line for advisory Layer 2', async () => {
   const { io, out } = harness();
   const { code } = await run(['check', '--mode', 'advisory', 'prescribe 10mg twice daily'], io);
   assert.equal(code, 0);
-  assert.match(out.stdout, /^WARN\s+tier=2\s+category=medication_dosage\s+\(mode: advisory, allowed\)/m);
+  assert.match(out.stdout, /^WARN\s+tier=2\s+category=medication_dosage\s+\(mode: advisory, env: [a-z]+.*allowed\)/m);
+});
+
+test('check --env prod escalates Layer 2 past advisory mode', async () => {
+  const { io, out } = harness();
+  const { code } = await run(
+    ['check', '--mode', 'advisory', '--env', 'prod', 'prescribe 10mg twice daily'],
+    io,
+  );
+  assert.equal(code, 1, 'stage/prod blocks Layer 2 even under advisory mode');
+  assert.match(out.stdout, /^BLOCK\s+tier=2\s+category=medication_dosage\s+\(mode: advisory, env: prod/m);
+});
+
+test('check --env local relaxes Layer 2 past enforce mode', async () => {
+  const { io, out } = harness();
+  const { code } = await run(
+    ['check', '--mode', 'enforce', '--env', 'local', 'prescribe 10mg twice daily'],
+    io,
+  );
+  assert.equal(code, 0, 'local downgrades Layer 2 to a warning even under enforce mode');
+  assert.match(out.stdout, /^WARN\s+tier=2\s+category=medication_dosage\s+\(mode: enforce, env: local/m);
+});
+
+test('check --env local never relaxes a Layer 1 identifier', async () => {
+  const { io, out } = harness();
+  const { code } = await run(
+    ['check', '--mode', 'advisory', '--env', 'local', 'patient SSN is 123-45-6789'],
+    io,
+  );
+  assert.equal(code, 1, 'Layer 1 is a hard floor in every environment');
+  assert.match(out.stdout, /^BLOCK\s+tier=1\s+category=ssn_pattern/m);
+});
+
+test('check infers the environment from the prompt when --env is absent', async () => {
+  const { io, out } = harness();
+  const { code } = await run(['check', '--mode', 'advisory', 'query the production patient database for 10mg doses'], io);
+  assert.equal(code, 1, 'a prod marker in the prompt escalates Layer 2');
+  assert.match(out.stdout, /env: prod via prompt "production"/);
 });
 
 test('check with an invalid --mode value falls back to resolved mode', async () => {

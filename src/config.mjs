@@ -17,21 +17,23 @@ function normalizeMode(mode) {
 }
 
 /**
- * Walk up from `cwd` looking for the nearest `.inverita-guard.json` that
- * declares a mode. `{ "mode": "enforce" | "advisory" }` wins; a bare
- * `{ "healthcare": true }` marker means 'enforce'. Configs with neither
- * directive (or unreadable/invalid) are skipped so they can't shadow a parent's
- * real config. Returns the mode string or null when none is found.
+ * Walk up from `cwd` looking for the nearest `.inverita-guard.json` from which
+ * `extract(cfg)` yields a non-null value, and return that value.
+ *
+ * The "skip if the key is absent" semantics matter: a child config that says
+ * nothing about a directive must not shadow a parent config that does. Every
+ * per-key reader below (mode, exceptions, environment) is built on this one
+ * walk so they all behave identically. Unreadable or invalid JSON is skipped
+ * exactly like a missing file — a broken config can never break the guard.
  */
-export function readProjectMode(cwd) {
+export function findProjectConfig(cwd, extract) {
   if (typeof cwd !== 'string' || !cwd) return null;
   let dir = path.resolve(cwd);
   for (;;) {
     try {
       const cfg = JSON.parse(fs.readFileSync(path.join(dir, CONFIG_FILENAME), 'utf8'));
-      const m = normalizeMode(cfg.mode);
-      if (m) return m;
-      if (cfg.healthcare === true) return 'enforce';
+      const value = extract(cfg);
+      if (value !== null && value !== undefined) return value;
       /* config present but no directive — keep walking up */
     } catch {
       /* no/invalid config here — keep walking up */
@@ -40,6 +42,17 @@ export function readProjectMode(cwd) {
     if (parent === dir) return null; // reached filesystem root
     dir = parent;
   }
+}
+
+/**
+ * Walk up from `cwd` looking for the nearest `.inverita-guard.json` that
+ * declares a mode. `{ "mode": "enforce" | "advisory" }` wins; a bare
+ * `{ "healthcare": true }` marker means 'enforce'. Configs with neither
+ * directive (or unreadable/invalid) are skipped so they can't shadow a parent's
+ * real config. Returns the mode string or null when none is found.
+ */
+export function readProjectMode(cwd) {
+  return findProjectConfig(cwd, (cfg) => normalizeMode(cfg.mode) || (cfg.healthcare === true ? 'enforce' : null));
 }
 
 /**
@@ -75,24 +88,15 @@ export function resolveMode({ cwd, env } = {}) {
  * Layer-2 categories only.
  */
 export function readProjectExceptions(cwd) {
-  if (typeof cwd !== 'string' || !cwd) return [];
-  let dir = path.resolve(cwd);
-  for (;;) {
-    try {
-      const cfg = JSON.parse(fs.readFileSync(path.join(dir, CONFIG_FILENAME), 'utf8'));
-      if (Array.isArray(cfg.exceptions)) {
-        return cfg.exceptions
-          .filter((e) => e && typeof e === 'object' && LAYER2_CATEGORIES.includes(e.category))
-          .map((e) => ({ category: e.category, reason: typeof e.reason === 'string' ? e.reason : '' }));
-      }
-      /* config present but no `exceptions` key — keep walking up */
-    } catch {
-      /* no/invalid config here — keep walking up */
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return [];
-    dir = parent;
-  }
+  return (
+    findProjectConfig(cwd, (cfg) =>
+      Array.isArray(cfg.exceptions)
+        ? cfg.exceptions
+            .filter((e) => e && typeof e === 'object' && LAYER2_CATEGORIES.includes(e.category))
+            .map((e) => ({ category: e.category, reason: typeof e.reason === 'string' ? e.reason : '' }))
+        : null,
+    ) || []
+  );
 }
 
 /** The effective set of excepted Layer-2 category ids for `cwd`. */

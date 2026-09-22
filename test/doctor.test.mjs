@@ -55,7 +55,7 @@ test('runDoctor picks the darwin and win32 managed-settings paths', () => {
       nodeVersion: 'v20.0.0',
     });
     assert.equal(res.ok, false);
-    assert.equal(res.checks.length, 5);
+    assert.equal(res.checks.length, 6);
   }
 });
 

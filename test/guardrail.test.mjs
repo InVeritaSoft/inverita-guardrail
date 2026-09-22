@@ -352,13 +352,17 @@ test('a block writes exactly one metadata-only audit record', () => {
   const rec = records[0];
   assert.deepEqual(
     Object.keys(rec).sort(),
-    ['action', 'category', 'mode', 'session_id', 'tier', 'ts'],
+    ['action', 'category', 'env_source', 'environment', 'mode', 'session_id', 'tier', 'ts'],
   );
   assert.equal(rec.session_id, 'sess-42');
   assert.equal(rec.tier, 1);
   assert.equal(rec.category, 'ssn_pattern');
   assert.equal(rec.mode, 'enforce');
   assert.equal(rec.action, 'block');
+  // The environment and WHY it was chosen are both recorded: a compliance
+  // reviewer has to be able to explain an environment-driven decision.
+  assert.equal(typeof rec.environment, 'string');
+  assert.equal(typeof rec.env_source, 'string');
   assert.equal(typeof rec.ts, 'string');
   assert.ok(!Number.isNaN(Date.parse(rec.ts)), 'ts must be a valid ISO timestamp');
 });

@@ -120,7 +120,7 @@ test('doctor --json returns a result object and a nonzero exit when unwired', ()
   const res = run(['doctor', '--json']);
   assert.ok(res.status === 0 || res.status === 1, 'doctor exits 0 or 1');
   const out = JSON.parse(res.stdout);
-  assert.ok(Array.isArray(out.checks) && out.checks.length === 5);
+  assert.ok(Array.isArray(out.checks) && out.checks.length === 6);
   assert.equal(typeof out.ok, 'boolean');
 });
 
