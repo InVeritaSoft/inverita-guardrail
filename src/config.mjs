@@ -108,7 +108,8 @@ function assertExceptableCategory(category) {
   if (LAYER1_CATEGORIES.includes(category)) {
     throw new Error(
       `"${category}" is a Layer-1 identifier check and can never be excepted — SSN/MRN/DOB/etc. ` +
-        'are a hard safety floor. Only Layer-2 clinical-specificity categories can have project exceptions.',
+        'are a hard safety floor for project config. Only Layer-2 clinical-specificity categories can have ' +
+        'project exceptions; a Layer-1 false positive is handled by the per-session break-glass attestation.',
     );
   }
   if (!LAYER2_CATEGORIES.includes(category)) {

@@ -43,7 +43,10 @@ const MAX_LOG_BYTES = 5 * 1024 * 1024; // must match the hook's cap
 // Run the hook as a child process with the given stdin, isolated to `root`
 // (so audit writes never touch the real logs/ dir). `raw` overrides the
 // JSON payload to exercise malformed input.
-function runHook(prompt, { root, raw, sessionId = 'test-sess', mode = 'enforce', cwd = '.' } = {}) {
+function runHook(
+  prompt,
+  { root, raw, sessionId = 'test-sess', mode = 'enforce', cwd = '.', extraEnv = {} } = {},
+) {
   const input =
     raw !== undefined ? raw : JSON.stringify({ prompt, session_id: sessionId, cwd });
   const env = { ...process.env };
@@ -52,6 +55,7 @@ function runHook(prompt, { root, raw, sessionId = 'test-sess', mode = 'enforce',
   // pins INVERITA_GUARD_MODE=enforce via managed settings). Advisory behavior
   // is covered by its own tests below.
   if (mode) env.INVERITA_GUARD_MODE = mode;
+  Object.assign(env, extraEnv);
   const res = spawnSync('node', [HOOK], { input, encoding: 'utf8', env });
   return {
     status: res.status,
@@ -415,4 +419,97 @@ test('audit log rotates to .1 once it exceeds the size cap', () => {
   const current = readAudit(root);
   assert.equal(current.length, 1, 'current log should hold only the post-rotation record');
   assert.equal(current[0].category, 'ssn_pattern');
+});
+
+/* ------------------------------------------------------------------ *
+ * 8. Break-glass override — session-scoped, capped, audited
+ * ------------------------------------------------------------------ *
+ * The one path that can clear a Layer 1 hit. Each test uses its own tmpRoot(),
+ * which isolates both logs/ and state/ (both derive from CLAUDE_PLUGIN_ROOT).
+ */
+
+const ATTEST = 'I confirm this prompt contains no real PHI';
+
+// The exact prompt shape that produced the reported false positive: a log
+// timestamp landing next to a TitleCase log line ("Hub Status"), which
+// dob_name_proximity reads as a patient. Kept verbatim as a regression anchor.
+const LOG_PASTE =
+  '09/22/2026 12:42 PM\nHub Status Update\n' +
+  "The JudiRx update for refill 49 failed: Input Error: Error(s) in field 'transfer_details'.";
+
+test('override: the reported log paste blocks without the attestation', () => {
+  const root = tmpRoot();
+  const res = runHook(LOG_PASTE, { root, sessionId: 'ovr-1' });
+  assert.equal(res.json.decision, 'block');
+  assert.match(res.json.reason, /dob_name_proximity/);
+});
+
+test('override: attesting lets the same prompt through and is audited', () => {
+  const root = tmpRoot();
+  const res = runHook(`${LOG_PASTE}\n${ATTEST}`, { root, sessionId: 'ovr-2' });
+  assert.equal(res.json.decision, undefined, 'must not block');
+  assert.match(res.json.hookSpecificOutput.additionalContext, /OVERRIDDEN/);
+  assert.match(res.json.hookSpecificOutput.additionalContext, /dob_name_proximity/);
+
+  const actions = readAudit(root).map((r) => r.action);
+  assert.ok(actions.includes('override_granted'), 'the grant is recorded');
+  assert.ok(actions.includes('overridden'), 'the overridden prompt is recorded');
+});
+
+test('override: clears Layer 1 identifiers too (the point of break-glass)', () => {
+  const root = tmpRoot();
+  const res = runHook(`patient SSN is 123-45-6789\n${ATTEST}`, { root, sessionId: 'ovr-3' });
+  assert.equal(res.json.decision, undefined);
+  assert.match(res.json.hookSpecificOutput.additionalContext, /ssn_pattern/);
+});
+
+test('override: persists for later prompts in the SAME session', () => {
+  const root = tmpRoot();
+  runHook(`hello\n${ATTEST}`, { root, sessionId: 'ovr-4' });
+  const res = runHook(LOG_PASTE, { root, sessionId: 'ovr-4' });
+  assert.equal(res.json.decision, undefined, 'still unlocked without retyping');
+  assert.match(res.json.hookSpecificOutput.additionalContext, /OVERRIDDEN/);
+});
+
+test('override: does NOT leak into a different session', () => {
+  const root = tmpRoot();
+  runHook(`hello\n${ATTEST}`, { root, sessionId: 'ovr-5a' });
+  const res = runHook(LOG_PASTE, { root, sessionId: 'ovr-5b' });
+  assert.equal(res.json.decision, 'block', 'another session must stay locked');
+});
+
+test('override: a near-miss phrase does not unlock', () => {
+  const root = tmpRoot();
+  const res = runHook(`${LOG_PASTE}\nthis contains no real PHI`, { root, sessionId: 'ovr-6' });
+  assert.equal(res.json.decision, 'block');
+});
+
+test('override: an org can disable it, and the block says so', () => {
+  const root = tmpRoot();
+  const res = runHook(`${LOG_PASTE}\n${ATTEST}`, {
+    root,
+    sessionId: 'ovr-7',
+    extraEnv: { INVERITA_GUARD_ALLOW_OVERRIDE: '0' },
+  });
+  assert.equal(res.json.decision, 'block', 'policy wins over the attestation');
+  assert.match(res.json.reason, /override disabled by policy/i);
+});
+
+test('override: a disabled override grants nothing for later prompts either', () => {
+  const root = tmpRoot();
+  runHook(`hello\n${ATTEST}`, {
+    root,
+    sessionId: 'ovr-8',
+    extraEnv: { INVERITA_GUARD_ALLOW_OVERRIDE: '0' },
+  });
+  const res = runHook(LOG_PASTE, { root, sessionId: 'ovr-8' });
+  assert.equal(res.json.decision, 'block', 'no unlock can have been recorded');
+});
+
+test('override: audit stays metadata-only — the attestation text is never logged', () => {
+  const root = tmpRoot();
+  runHook(`patient SSN is 123-45-6789\n${ATTEST}`, { root, sessionId: 'ovr-9' });
+  const raw = fs.readFileSync(path.join(root, 'logs', 'audit.jsonl'), 'utf8');
+  assert.doesNotMatch(raw, /123-45-6789/, 'never log the matched text');
+  assert.doesNotMatch(raw, /I confirm this prompt/i, 'never log the attestation text');
 });

@@ -116,8 +116,10 @@ to match:
 | `dev`, or no signal | **block** | mode decides (unchanged behavior) |
 | `stage`, `prod` | **block** | **block** — even under `advisory` |
 
-**Layer 1 never yields.** No environment, config value, or prompt wording can
-soften an SSN/MRN/DOB hit. Environment only ever moves Layer 2.
+**Environment only ever moves Layer 2.** No environment value softens an
+SSN/MRN/DOB hit — the sole mechanism that clears a Layer-1 hit is the
+[break-glass attestation](#break-glass-override-per-session-expires-audited),
+which is separate, audited, and expires.
 
 **Resolution (highest priority first):**
 
@@ -179,8 +181,10 @@ auditable, not silent.
 
 **Exceptions can never reach Layer 1.** The CLI refuses outright to add a
 Layer-1 category (`ssn_pattern`, `mrn_pattern`, `dob_name_proximity`,
-`email_clinical`, `insurance_policy`) — identifiers are a hard safety floor,
-full stop. This isn't just a write-time check: the guard's read path
+`email_clinical`, `insurance_policy`) — identifiers are a hard safety floor
+for *project-scoped* configuration. The only thing that can clear a Layer-1 hit
+is the per-session break-glass attestation below, which is deliberately
+awkward, expires, and is audited every time. This isn't just a write-time check: the guard's read path
 independently filters `exceptions` entries against the Layer-2 category list,
 so even a hand-edited or malicious config naming a Layer-1 category is
 silently dropped and has no effect. A prompt matching an excepted category is
@@ -189,6 +193,55 @@ still told it happened) and audited with `action: "excepted"`.
 
 You can also add/remove exceptions conversationally — see
 [Self-heal skill](#self-heal-skill), which uses the same CLI under the hood.
+
+### Break-glass override (per session, expires, audited)
+
+Layer 1 has no exception mechanism and no mode that softens it, which means a
+Layer-1 false positive leaves a developer with nothing to do but mangle their
+prompt or route around the guard entirely. Pasting a log is the common case: a
+timestamp landing beside a TitleCase log line reads as a name beside a date.
+
+So there is exactly one escape hatch, and it is built to be expensive rather
+than convenient. The developer types this sentence anywhere in the prompt:
+
+```
+I confirm this prompt contains no real PHI
+```
+
+That attestation **unlocks the rest of the session** — the prompt carrying it
+included, so nothing has to be submitted twice.
+
+| Property | Behavior |
+|---|---|
+| Scope | The attesting `session_id` only. Never another session, developer, or machine. |
+| Duration | 60 minutes, then it re-locks. Re-attesting restarts the window. |
+| Reach | **Everything, Layer 1 included** — SSN, MRN, DOB, insurance, and all of Layer 2. |
+| Record | Audited twice: `action: "override_granted"` and `action: "overridden"` per prompt. |
+| Kill switch | `INVERITA_GUARD_ALLOW_OVERRIDE=0` removes it entirely (managed settings). |
+
+Design choices worth knowing:
+
+- **It is a sentence, not a token.** `#skip` would become muscle memory within a
+  week. A sentence is an attestation a named developer makes, and it reads
+  correctly in an audit log a compliance reviewer has to interpret.
+- **Near misses do not work.** "this contains no real PHI" does not unlock. It
+  has to be typed on purpose.
+- **The model is told.** An overridden prompt injects an `OVERRIDDEN` context
+  note saying a human attested — not that the prompt scanned clean — so Claude
+  keeps treating the material as sensitive.
+- **A disabled override says so.** If policy removed it, typing the phrase adds
+  an explicit note to the block rather than failing silently.
+- **State is metadata only** — `{ session_id: expires_at }` in `state/`, never
+  prompt text. Expired entries are pruned on write. Corrupt state fails safe
+  (locked).
+
+> **This is a real loosening of the safety floor, and it is meant to be.** While
+> an unlock is live, a genuine SSN in a prompt will pass. The bet is explicit: a
+> bypass that leaves an audit trail beats a bypass where the developer pastes
+> into a file, or turns the guard off, and leaves nothing behind. If your
+> compliance posture cannot accept that bet, set
+> `INVERITA_GUARD_ALLOW_OVERRIDE=0` in managed settings and the mechanism
+> does not exist on those machines.
 
 ### Audit log
 
@@ -455,9 +508,11 @@ prompts. Expect Layer 2 false positives on everyday developer phrasing such as:
 Layer 1 is tuned to be much quieter (it keys on high-confidence identifier
 shapes and proximity), so Layer 1 false positives should be rare.
 
-Because the posture is strict block-by-default with **no local override**, the
-developer's recourse when Layer 2 wrongly trips is to **reword the prompt**, or
-to **request a tuning change** to the regex config.
+When Layer 2 wrongly trips, the developer's recourse is to **reword the
+prompt**, add a **project exception**, or **request a tuning change** to the
+regex config. When Layer 1 wrongly trips — which does happen, notably on pasted
+logs — the recourse is the **break-glass attestation**, because no exception or
+mode can clear tier 1.
 
 ### Submitting a tuning request
 

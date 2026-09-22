@@ -5,6 +5,58 @@ All notable changes to **inverita-guardrail** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12] — 2026-09-22
+
+### Added
+- **Break-glass override** (`src/override.mjs`) — a developer-initiated,
+  session-scoped, time-capped, audited bypass of the detector, **including
+  Layer 1**. Typing the attestation `I confirm this prompt contains no real
+  PHI` anywhere in a prompt unlocks the rest of that session (the prompt
+  carrying it included, so nothing is submitted twice).
+  - **Session-scoped** to the attesting `session_id` — never another session,
+    developer, or machine.
+  - **Expires after 60 minutes** regardless of session length; re-attesting
+    restarts the window.
+  - **Audited twice**: `action: "override_granted"` on the grant, and
+    `action: "overridden"` on every prompt it lets through. State
+    (`state/overrides.json`) holds only `{ session_id: expires_at }` — never
+    prompt text — is pruned of expired entries on write, and fails safe
+    (locked) if unreadable.
+  - **`INVERITA_GUARD_ALLOW_OVERRIDE=0`** removes the mechanism fleet-wide via
+    managed settings, so org enforcement stays enforceable.
+  - An overridden prompt injects an `OVERRIDDEN` context note telling the model
+    a human *attested* — not that the prompt scanned clean — so it keeps
+    treating the material as sensitive. Typing the phrase where policy disabled
+    it adds an explicit note to the block rather than failing silently.
+
+### Why
+- Layer 1 had no exception, no mode, and no environment that could soften it.
+  A Layer-1 false positive — notably a pasted log, where a timestamp beside a
+  TitleCase log line reads as a name beside a date — left a developer with
+  nothing to do but mangle the prompt or route around the guard entirely. A
+  bypass that leaves an audit trail beats a bypass that leaves nothing.
+
+### Changed
+- Documentation that claimed Layer 1 had "no local override" now states the
+  actual rule: Layer 1 is a hard floor for *project configuration*, and the
+  per-session attestation is the sole mechanism that clears it.
+
+### Known trade-off
+- **This is a real loosening of the safety floor.** While an unlock is live, a
+  genuine SSN in a prompt will pass (audited as `overridden`). Set
+  `INVERITA_GUARD_ALLOW_OVERRIDE=0` in managed settings if that bet is
+  unacceptable for your compliance posture.
+- The underlying `dob_name_proximity` false positive on log pastes is **not
+  fixed** by this release — the override only makes it survivable. The detector
+  fix (clock-time and non-past dates disqualified as DOBs, TitleCase stoplist)
+  is still outstanding.
+
+### Tests
+- 215 tests (up from 190), including the reported log paste as a verbatim
+  regression anchor, session isolation, TTL expiry and refresh, near-miss
+  phrases, the policy kill switch, and an assertion that neither the matched
+  text nor the attestation is ever written to the audit log.
+
 ## [0.1.11] — 2026-09-22
 
 ### Added

@@ -4,3 +4,6 @@ logs/*.jsonl.*
 
 # Keep the logs/ directory tracked (audit log is written here at runtime).
 !logs/.gitkeep
+
+# Break-glass override state — session ids + expiry timestamps, local only.
+state/

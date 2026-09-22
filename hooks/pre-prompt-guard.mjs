@@ -33,6 +33,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readStream } from '../src/stdin.mjs';
 import { resolveMode, resolveExceptionCategories } from '../src/config.mjs';
 import { resolveEnvironment, isRelaxed, isStrict, UNKNOWN } from '../src/environment.mjs';
+import {
+  containsOverridePhrase,
+  isOverrideEnabled,
+  grantOverride,
+  isOverrideActive,
+  overrideRemainingMs,
+} from '../src/override.mjs';
 
 /* ------------------------------------------------------------------ *
  * Configuration
@@ -74,6 +81,33 @@ function buildWarnContext(hit, env) {
     `(category: ${hit.category}), not blocked. ${hit.body}\n` +
     'Use synthetic or fully anonymized data; this project is not in enforce mode, so ' +
     'this is a caution rather than a block.'
+  );
+}
+
+/**
+ * Context injected when a break-glass override lets a detected prompt through.
+ * The model is told explicitly that a human attested — not that the prompt is
+ * clean — so it keeps treating the material as sensitive.
+ */
+function buildOverrideContext(hit, minutesLeft) {
+  return (
+    `[${PLUGIN_NAME}] OVERRIDDEN — a detection fired (tier ${hit.tier}, category: ${hit.category}) ` +
+    'but the developer attested that this prompt contains no real PHI, so it was allowed ' +
+    `through. This unlock is session-scoped and expires in ~${minutesLeft} minute(s).\n` +
+    'The attestation is a human claim, not a clean scan: treat this material as sensitive, ' +
+    'do not echo identifiers back, and continue to use synthetic or fully anonymized data.'
+  );
+}
+
+/**
+ * Appended to a block when the developer typed the attestation but the org has
+ * switched the override off. Silence here would look like the phrase failed.
+ */
+function buildOverrideDisabledNote() {
+  return (
+    '\n\nNote: this machine has the break-glass override disabled by policy ' +
+    '(INVERITA_GUARD_ALLOW_OVERRIDE=0), so the attestation phrase has no effect here. ' +
+    'Remove the flagged content or contact the compliance owner.'
   );
 }
 
@@ -285,7 +319,8 @@ export const LAYER1 = [
  * Same rule shape as LAYER1. This set is intentionally broad and WILL produce
  * false positives on legitimate non-PHI prompts. It is the primary tuning
  * surface: edit these patterns (or their primitives above) to adjust the net.
- * There is no local per-developer override by design.
+ * There is no local per-developer *configuration* override by design; the only
+ * bypass is the audited, expiring break-glass attestation in src/override.mjs.
  */
 export const LAYER2 = [
   {
@@ -481,8 +516,49 @@ export function processHookInput(raw) {
     const cwd = typeof payload.cwd === 'string' ? payload.cwd : undefined;
     const mode = resolveMode({ cwd, env: process.env });
     const env = resolveEnvironment({ cwd, env: process.env, prompt });
+
+    // Break-glass: the attestation both grants the unlock and applies to the
+    // prompt carrying it, so a developer re-submits once rather than twice.
+    // Granting is recorded even when the prompt itself is clean.
+    const overrideEnabled = isOverrideEnabled(process.env);
+    const attested = containsOverridePhrase(prompt);
+    if (overrideEnabled && attested) {
+      grantOverride(sessionId);
+      appendAudit(
+        {
+          session_id: sessionId,
+          tier: null,
+          category: 'override_granted',
+          mode,
+          environment: env.environment,
+          env_source: env.source,
+          action: 'override_granted',
+        },
+        new Date().toISOString(),
+      );
+    }
+
     const hit = detect(prompt);
     if (hit) {
+      // An active unlock outranks every other decision, Layer 1 included. This
+      // is the one path that can clear tier 1, and it exists only because a
+      // human typed an attestation against this session id.
+      if (overrideEnabled && isOverrideActive(sessionId)) {
+        appendAudit(
+          {
+            session_id: sessionId,
+            tier: hit.tier,
+            category: hit.category,
+            mode,
+            environment: env.environment,
+            env_source: env.source,
+            action: 'overridden',
+          },
+          new Date().toISOString(),
+        );
+        const minutesLeft = Math.max(1, Math.round(overrideRemainingMs(sessionId) / 60000));
+        return { stdout: JSON.stringify(contextOutput(buildOverrideContext(hit, minutesLeft))) };
+      }
       const auditBase = {
         session_id: sessionId,
         tier: hit.tier,
@@ -503,7 +579,10 @@ export function processHookInput(raw) {
         // Explain an environment-driven block; a mode-driven one already reads
         // correctly on its own.
         const escalated = hit.tier === 2 && isStrict(env.environment) && mode !== 'enforce';
-        const reason = escalated ? hit.reason + buildEscalationNote(env) : hit.reason;
+        let reason = escalated ? hit.reason + buildEscalationNote(env) : hit.reason;
+        // Typing the attestation on a machine where policy removed the override
+        // must not fail silently.
+        if (attested && !overrideEnabled) reason += buildOverrideDisabledNote();
         return { stdout: JSON.stringify({ decision: 'block', reason }) };
       }
       // Layer 2 allowed through: inject a caution instead of blocking.
