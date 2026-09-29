@@ -1,0 +1,2 @@
+# Store and check out text files with LF, whatever the local core.autocrlf is.
+* text=auto eol=lf
