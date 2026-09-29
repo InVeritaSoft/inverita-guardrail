@@ -117,6 +117,7 @@ const LAYER2_CASES = [
   ['icd_code', 'map the field for E11.9'],
   ['icd_code', 'diagnosis code I10 in the seed'],
   ['icd_code', 'handle J45.909 in the parser'],
+  ['icd_code', 'group codes E10-E14 together'],   // an ICD range keeps its letter
   ['medication_dosage', 'prescribe 10mg twice daily'],
   ['medication_dosage', 'take 500mcg of the compound'],
   ['medication_dosage', '2x daily dosing schedule'],
@@ -157,6 +158,8 @@ const CLEAN_CASES = [
   'review the patient portal login flow',      // "patient" alone (no email) is fine
   'the diagnosis feature needs a fix',         // "diagnosis" alone (no email) is fine
   'deploy version 2 to staging today',
+  'the setup lives in TestBase.cs L32-37',      // line range, not an ICD code
+  'see Service.cs#L42 for the call',           // GitHub line anchor
 ];
 
 test('clean developer prompts do not match either tier', () => {
@@ -512,4 +515,57 @@ test('override: audit stays metadata-only — the attestation text is never logg
   const raw = fs.readFileSync(path.join(root, 'logs', 'audit.jsonl'), 'utf8');
   assert.doesNotMatch(raw, /123-45-6789/, 'never log the matched text');
   assert.doesNotMatch(raw, /I confirm this prompt/i, 'never log the attestation text');
+});
+
+/* ------------------------------------------------------------------ *
+ * 9. Task notifications — a background agent's result, not a typed prompt
+ * ------------------------------------------------------------------ *
+ * Claude Code submits a subagent's completion as a <task-notification> user
+ * turn. Layer 2 only warns there; Layer 1 and the override rules do not move.
+ */
+
+const notify = (result) =>
+  `<task-notification>
+<task-id>abc123</task-id>
+<status>completed</status>
+` +
+  `<result>${result}</result>
+</task-notification>`;
+
+// Shape of the reported false positive: line citations read as ICD codes and
+// a code summary mentioning "production" escalated the prompt to prod.
+const AGENT_SUMMARY = notify(
+  '- **Production resolution:** the resolver picks the provider (same file, L98).',
+);
+
+test('notification: the reported agent summary warns instead of blocking under enforce', () => {
+  const root = tmpRoot();
+  const res = runHook(AGENT_SUMMARY, { root, sessionId: 'tn-1' });
+  assert.equal(res.json.decision, undefined, 'must not block a subagent result on Layer 2');
+  assert.match(res.json.hookSpecificOutput.additionalContext, /origin: task-notification/);
+  assert.match(res.json.hookSpecificOutput.additionalContext, /category: icd_code/);
+  const [rec] = readAudit(root);
+  assert.equal(rec.action, 'warn');
+  assert.equal(rec.origin, 'task_notification');
+  assert.notEqual(rec.environment, 'prod', 'agent prose must not pick the environment');
+});
+
+test('notification: Layer 1 identifiers still block', () => {
+  const res = runHook(notify('found SSN 123-45-6789 in the seed'), { root: tmpRoot(), sessionId: 'tn-2' });
+  assert.equal(res.json.decision, 'block');
+  assert.match(res.json.reason, /category: ssn_pattern/);
+});
+
+test('notification: a subagent cannot grant the override', () => {
+  const root = tmpRoot();
+  runHook(notify(ATTEST), { root, sessionId: 'tn-3' });
+  assert.ok(!readAudit(root).some((r) => r.action === 'override_granted'));
+  const res = runHook(LOG_PASTE, { root, sessionId: 'tn-3' });
+  assert.equal(res.json.decision, 'block', 'the session must stay locked');
+});
+
+test('notification: only a whole wrapped payload counts', () => {
+  // A typed prompt that merely mentions the tag is judged as a typed prompt.
+  const res = runHook('why did <task-notification> fail for E11.9?', { root: tmpRoot(), sessionId: 'tn-4' });
+  assert.equal(res.json.decision, 'block');
 });

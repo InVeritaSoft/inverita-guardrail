@@ -5,6 +5,22 @@ All notable changes to **inverita-guardrail** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Background-agent results no longer block on Layer 2.** Claude Code submits
+  a subagent's completion as a `<task-notification>` user turn. That text was
+  already generated upstream, so blocking it only discarded the agent's work.
+  Its prose also produced false positives: `L98` line citations matched
+  `icd_code`, and "Production resolution" escalated the prompt to prod. Now,
+  for these turns, Layer 2 **warns** and the audit record carries
+  `origin: "task_notification"`. The notification's wording no longer selects
+  the environment. Layer 1 still blocks, and the break-glass phrase inside a
+  notification grants nothing: a subagent cannot attest for the developer.
+- **`icd_code` skips source-line citations**: line ranges (`L32-37`) and
+  GitHub anchors (`#L42`) no longer match. ICD ranges such as `E10-E14`
+  still match.
+
 ## [0.1.12] — 2026-09-22
 
 ### Added
